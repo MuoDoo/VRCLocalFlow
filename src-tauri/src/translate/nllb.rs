@@ -1,9 +1,22 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use ct2rs::{Config, TranslationOptions, Translator as Ct2Translator};
 
 use super::registry::Language;
+
+/// Strip the Windows `\\?\` extended-length path prefix.
+/// CTranslate2's C++ layer cannot open files via this prefix.
+fn strip_unc_prefix(path: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let s = path.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix("\\\\?\\") {
+            return PathBuf::from(stripped);
+        }
+    }
+    path.to_path_buf()
+}
 
 /// Custom tokenizer for NLLB that wraps SentencePiece and prepends the source language token.
 struct NllbTokenizer {
@@ -64,7 +77,7 @@ pub struct Translator {
 impl Translator {
     /// Create a translator for a specific language pair using the NLLB model.
     pub fn for_pair(models_root: &Path, source: Language, target: Language) -> Result<Self> {
-        let model_dir = models_root.join(NLLB_MODEL_DIR);
+        let model_dir = strip_unc_prefix(&models_root.join(NLLB_MODEL_DIR));
         let config = Config::default();
 
         let tokenizer = NllbTokenizer::new(&model_dir, source.nllb_code())?;
