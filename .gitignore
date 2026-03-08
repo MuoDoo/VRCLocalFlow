@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+src-tauri/target/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Models — downloaded at runtime or via `make models`
+src-tauri/resources/models/
+
+# Third-party cloned repos
+third_party/
+
+# xwin cache (Windows SDK sysroot)
+.xwin-cache/
+
+# Cloudflare Wrangler local state
+.wrangler/
+
+# Claude Code
+.claude/
