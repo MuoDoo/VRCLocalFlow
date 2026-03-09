@@ -29,11 +29,15 @@ jobs:
 
       - name: Install Vulkan SDK
         if: matrix.variant == 'vulkan'
-        uses: humbletim/setup-vulkan-sdk@v1.2.0
-        with:
-          vulkan-query-version: 1.3.290.0
-          vulkan-components: Vulkan-Headers, Vulkan-Loader
-          vulkan-use-cache: true
+        shell: pwsh
+        run: |
+          $ver = "1.3.290.0"
+          $installer = "$env:TEMP\VulkanSDK-$ver-Installer.exe"
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$ver/windows/VulkanSDK-$ver-Installer.exe" -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait
+          $sdkPath = "C:\VulkanSDK\$ver"
+          echo "VULKAN_SDK=$sdkPath" >> $env:GITHUB_ENV
+          echo "$sdkPath\Bin" >> $env:GITHUB_PATH
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2.8.0
