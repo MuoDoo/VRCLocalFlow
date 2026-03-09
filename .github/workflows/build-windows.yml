@@ -17,6 +17,9 @@ jobs:
           - variant: cpu
             cargo_flags: ""
             artifact_suffix: ""
+          - variant: cuda
+            cargo_flags: "--features cuda"
+            artifact_suffix: "-cuda"
           - variant: vulkan
             cargo_flags: "--features vulkan"
             artifact_suffix: "-vulkan"
@@ -26,6 +29,14 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install CUDA Toolkit
+        if: matrix.variant == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.19
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
       - name: Install Vulkan SDK
         if: matrix.variant == 'vulkan'
