@@ -39,6 +39,7 @@ opt-level = 2
 [features]
 default = []
 cuda = ["whisper-rs/cuda"]
+vulkan = ["whisper-rs/vulkan"]
 openblas = ["whisper-rs/openblas"]
 metal = ["whisper-rs/metal"]
 hipblas = ["whisper-rs/hipblas"]

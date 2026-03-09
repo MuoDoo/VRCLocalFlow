@@ -10,16 +10,36 @@ jobs:
   build-windows:
     runs-on: windows-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            cargo_flags: ""
+            artifact_suffix: ""
+          - variant: vulkan
+            cargo_flags: "--features vulkan"
+            artifact_suffix: "-vulkan"
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install Vulkan SDK
+        if: matrix.variant == 'vulkan'
+        uses: humbletim/setup-vulkan-sdk@v1.2.0
+        with:
+          vulkan-query-version: 1.3.290.0
+          vulkan-components: Vulkan-Headers, Vulkan-Loader
+          vulkan-use-cache: true
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          key: ${{ matrix.variant }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -42,11 +62,12 @@ jobs:
           CMAKE_CXX_FLAGS: -utf-8
           CMAKE_C_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
           CMAKE_CXX_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
+          TAURI_CARGO_FLAGS: ${{ matrix.cargo_flags }}
         run: pnpm tauri build --bundles nsis
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rtvt-windows-installer
+          name: rtvt-windows-installer${{ matrix.artifact_suffix }}
           path: src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error

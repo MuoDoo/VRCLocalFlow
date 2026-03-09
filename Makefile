@@ -18,7 +18,7 @@ MODELS_DIR := src-tauri/resources/models
 WHISPER_MODEL := $(MODELS_DIR)/ggml-base.bin
 NLLB_MODEL := $(MODELS_DIR)/nllb-200-distilled-600M/model.bin
 
-.PHONY: dev setup models models-whisper models-nllb clean check build-mac build-win
+.PHONY: dev setup models models-whisper models-nllb clean check build-mac build-win build-win-vulkan dev-vulkan check-vulkan
 
 # Default: setup + run
 dev: setup
@@ -67,6 +67,10 @@ check:
 check-cuda:
 	cd src-tauri && cargo check --features cuda
 
+# Cargo check with Vulkan GPU acceleration (Nvidia + AMD)
+check-vulkan:
+	cd src-tauri && cargo check --features vulkan
+
 # Clean models (re-download next time)
 clean:
 	rm -rf $(MODELS_DIR)/nllb-200-distilled-600M
@@ -86,6 +90,14 @@ build-win: setup
 build-win-cuda: setup
 	TAURI_CARGO_FLAGS="--features cuda" pnpm tauri build --bundles nsis
 
+# Windows: build with Vulkan GPU acceleration (requires Vulkan SDK, works with Nvidia + AMD)
+build-win-vulkan: setup
+	TAURI_CARGO_FLAGS="--features vulkan" pnpm tauri build --bundles nsis
+
 # Dev mode with CUDA GPU acceleration
 dev-cuda: setup
 	TAURI_CARGO_FLAGS="--features cuda" pnpm tauri dev
+
+# Dev mode with Vulkan GPU acceleration (Nvidia + AMD)
+dev-vulkan: setup
+	TAURI_CARGO_FLAGS="--features vulkan" pnpm tauri dev
