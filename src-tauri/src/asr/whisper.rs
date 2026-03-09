@@ -22,7 +22,7 @@ const VAD_FRAME_MS: usize = 30;
 const VAD_FRAME_SAMPLES: usize = SAMPLE_RATE * VAD_FRAME_MS / 1000; // 480 samples
 const MAX_SPEECH_SECONDS: f32 = 15.0;
 const MAX_SPEECH_SAMPLES: usize = (SAMPLE_RATE as f32 * MAX_SPEECH_SECONDS) as usize;
-const END_OF_SPEECH_MS: usize = 700;
+const END_OF_SPEECH_MS: usize = 400;
 const END_OF_SPEECH_SAMPLES: usize = SAMPLE_RATE * END_OF_SPEECH_MS / 1000;
 const MIN_SPEECH_MS: usize = 250;
 const MIN_SPEECH_SAMPLES: usize = SAMPLE_RATE * MIN_SPEECH_MS / 1000;
@@ -589,7 +589,9 @@ fn asr_thread(
 
     let mut vad_proc = VadProcessor::new();
 
-    // Closure to run inference on a VAD segment
+    // Closure to run inference on a VAD segment.
+    // Emits each Whisper segment individually as an asr-result event,
+    // enabling per-sentence translation instead of waiting for the entire utterance.
     let run_inference = |segment: Vec<f32>,
                              state: &mut whisper_rs::WhisperState,
                              language: &str,
@@ -615,14 +617,19 @@ fn asr_thread(
         };
         let audio_duration_ms = (trimmed.len() as f32 / SAMPLE_RATE as f32) * 1000.0;
         let infer_start = std::time::Instant::now();
-        match recognize_with_state(state, audio_for_inference, language, n_threads) {
-            Ok(result) => {
+        match recognize_segments(state, audio_for_inference, language, n_threads) {
+            Ok(segments) => {
                 let infer_ms = infer_start.elapsed().as_millis();
                 let rtf = infer_ms as f32 / audio_duration_ms;
                 info!(
-                    "Whisper inference: {infer_ms}ms for {audio_duration_ms:.0}ms audio (RTF={rtf:.2})"
+                    "Whisper inference: {infer_ms}ms for {audio_duration_ms:.0}ms audio (RTF={rtf:.2}), {} segment(s)",
+                    segments.len()
                 );
-                if !result.text.is_empty() && !is_junk(&result.text) {
+                for seg in segments {
+                    let result = AsrResult {
+                        text: seg.text,
+                        language: seg.language,
+                    };
                     if let Err(e) = app_handle.emit(event_name, &result) {
                         error!("Failed to emit ASR result: {e}");
                     }
@@ -885,13 +892,22 @@ mod tests {
     }
 }
 
+/// Result from a single Whisper segment.
+#[derive(Debug, Clone)]
+struct SegmentResult {
+    text: String,
+    language: String,
+}
+
 /// Run inference using a pre-allocated WhisperState (avoids per-call allocation).
-fn recognize_with_state(
+/// Returns individual segments instead of concatenated text, enabling per-sentence
+/// translation triggering.
+fn recognize_segments(
     state: &mut whisper_rs::WhisperState,
     audio: &[f32],
     language: &str,
     n_threads: i32,
-) -> Result<AsrResult> {
+) -> Result<Vec<SegmentResult>> {
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
 
     // Set language: use explicit language or auto-detect
@@ -909,31 +925,36 @@ fn recognize_with_state(
     params.set_print_timestamps(false);
     params.set_print_special(false);
     params.set_no_context(true);
-    params.set_single_segment(true);
+    // Allow Whisper to split into multiple sentences for per-sentence translation
+    params.set_single_segment(false);
     params.set_suppress_blank(true);
     // Suppress non-speech tokens to reduce hallucinations
-    params.set_suppress_non_speech_tokens(true);
+    params.set_suppress_nst(true);
 
     state
         .full(params, audio)
         .map_err(|e| anyhow::anyhow!("Whisper inference failed: {e}"))?;
 
-    let num_segments = state.full_n_segments().map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mut text = String::new();
+    let num_segments = state.full_n_segments();
+    let lang = {
+        let id = state.full_lang_id_from_state();
+        whisper_rs::get_lang_str(id)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "en".to_string())
+    };
+
+    let mut segments = Vec::new();
     for i in 0..num_segments {
-        if let Ok(seg_text) = state.full_get_segment_text(i) {
-            text.push_str(&seg_text);
+        if let Some(seg) = state.get_segment(i) {
+            let text = seg.to_str_lossy().trim().to_string();
+            if !text.is_empty() && !is_junk(&text) {
+                segments.push(SegmentResult {
+                    text,
+                    language: lang.clone(),
+                });
+            }
         }
     }
 
-    let language = state
-        .full_lang_id_from_state()
-        .ok()
-        .and_then(|id| whisper_rs::get_lang_str(id).map(|s| s.to_string()))
-        .unwrap_or_else(|| "en".to_string());
-
-    Ok(AsrResult {
-        text: text.trim().to_string(),
-        language,
-    })
+    Ok(segments)
 }
