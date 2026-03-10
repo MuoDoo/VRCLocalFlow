@@ -946,12 +946,14 @@ fn recognize_segments(
     let mut segments = Vec::new();
     for i in 0..num_segments {
         if let Some(seg) = state.get_segment(i) {
-            let text = seg.to_str_lossy().trim().to_string();
-            if !text.is_empty() && !is_junk(&text) {
-                segments.push(SegmentResult {
-                    text,
-                    language: lang.clone(),
-                });
+            if let Ok(raw) = seg.to_str_lossy() {
+                let text = raw.trim().to_string();
+                if !text.is_empty() && !is_junk(&text) {
+                    segments.push(SegmentResult {
+                        text,
+                        language: lang.clone(),
+                    });
+                }
             }
         }
     }
