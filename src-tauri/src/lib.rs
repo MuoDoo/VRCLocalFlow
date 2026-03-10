@@ -119,6 +119,23 @@ fn init_logging() {
         .init();
 }
 
+fn log_file_path() -> std::path::PathBuf {
+    let log_dir = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join("com.rtvt.app");
+    log_dir.join("rtvt.log")
+}
+
+#[tauri::command]
+fn open_log_file() -> Result<(), String> {
+    let path = log_file_path();
+    if !path.exists() {
+        return Err("Log file not found".to_string());
+    }
+    open::that(&path).map_err(|e| format!("Failed to open log file: {e}"))
+}
+
 pub fn run() {
     init_logging();
 
@@ -139,6 +156,7 @@ pub fn run() {
             stop_pipeline,
             settings::load_settings,
             settings::save_settings,
+            open_log_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

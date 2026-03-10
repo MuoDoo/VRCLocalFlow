@@ -30,6 +30,7 @@ reqwest = { version = "0.12", features = ["stream"] }
 futures-util = "0.3"
 rosc = "0.10"
 unicode-width = "0.2"
+open = "5"
 
 # Optimize dependencies in dev mode — critical for whisper.cpp / CTranslate2 performance.
 # Without this, inference runs at opt-level=0 which is 5-10x slower.
