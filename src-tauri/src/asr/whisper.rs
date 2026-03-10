@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use tauri::{AppHandle, Emitter, Manager};
 use webrtc_vad::{Vad, SampleRate, VadMode};
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{FullParams, SamplingStrategy, SystemInfo, WhisperContext, WhisperContextParameters};
 
 const DEFAULT_MODEL_ID: &str = "base";
 const MODELS_SUBDIR: &str = "models";
@@ -566,13 +566,33 @@ fn asr_thread(
 ) -> Result<()> {
     info!("Loading whisper model from: {model_path}");
 
+    // Log system capabilities for GPU debugging
+    let sys_info = SystemInfo::default();
+    let sys_info_str = whisper_rs::print_system_info();
+    info!("Whisper system info: {sys_info_str}");
+    info!(
+        "GPU support compiled: cuda={}, blas={}, avx={}, avx2={}, fma={}, f16c={}",
+        sys_info.cuda, sys_info.blas, sys_info.avx, sys_info.avx2, sys_info.fma, sys_info.f16c
+    );
+
+    let gpu_available = sys_info.cuda;
+    if cfg!(feature = "cuda") && !gpu_available {
+        warn!("CUDA feature enabled at compile time but CUDA not available at runtime! Check CUDA toolkit installation.");
+    }
+    if !cfg!(feature = "cuda") && !cfg!(feature = "vulkan") && !cfg!(feature = "metal") {
+        info!("No GPU feature enabled at compile time. Running on CPU only.");
+    }
+
     // Configure context with GPU and flash attention support
     let mut ctx_params = WhisperContextParameters::default();
-    ctx_params.use_gpu(true);
-    ctx_params.flash_attn(true);
-    info!(
-        "Whisper context params: use_gpu=true, flash_attn=true"
-    );
+    ctx_params.use_gpu(gpu_available);
+    if gpu_available {
+        ctx_params.flash_attn(true);
+        ctx_params.gpu_device(0);
+        info!("Whisper context params: use_gpu=true, flash_attn=true, gpu_device=0");
+    } else {
+        info!("Whisper context params: use_gpu=false (no GPU backend available)");
+    }
 
     let ctx = WhisperContext::new_with_params(&model_path, ctx_params)
         .map_err(|e| anyhow::anyhow!("Failed to load whisper model: {e}"))?;
@@ -582,9 +602,21 @@ fn asr_thread(
         .create_state()
         .map_err(|e| anyhow::anyhow!("Failed to create whisper state: {e}"))?;
 
-    let n_threads = optimal_thread_count();
+    // Use fewer CPU threads when GPU handles the heavy compute
+    let n_threads = if gpu_available { 2 } else { optimal_thread_count() };
     info!(
-        "Whisper model loaded successfully (threads={n_threads})"
+        "Whisper model loaded successfully (threads={n_threads}, gpu={})",
+        if gpu_available { "yes" } else { "no" }
+    );
+
+    // Notify frontend about GPU status
+    let gpu_status = if gpu_available { "GPU (CUDA)" } else { "CPU" };
+    let _ = app_handle.emit(
+        "pipeline-status",
+        serde_json::json!({
+            "status": "running",
+            "message": format!("Whisper loaded on {gpu_status}")
+        }),
     );
 
     let mut vad_proc = VadProcessor::new();
