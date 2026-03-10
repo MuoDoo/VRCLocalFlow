@@ -38,6 +38,16 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
+      # CMake 3.31+ has a broken FindCUDA module that fails to parse Windows
+      # paths containing backslashes (e.g. C:\Program Files\...).  CTranslate2
+      # (bundled in ct2rs) still relies on the legacy find_package(CUDA), so we
+      # pin to CMake 3.30 until upstream migrates to CUDAToolkit.
+      - name: Pin CMake 3.30 for CUDA build
+        if: matrix.variant == 'cuda'
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: '3.30.8'
+
       - name: Install Vulkan SDK
         if: matrix.variant == 'vulkan'
         shell: pwsh
@@ -49,6 +59,18 @@ jobs:
           $sdkPath = "C:\VulkanSDK\$ver"
           echo "VULKAN_SDK=$sdkPath" >> $env:GITHUB_ENV
           echo "$sdkPath\Bin" >> $env:GITHUB_PATH
+
+      - name: Verify Vulkan SDK installation
+        if: matrix.variant == 'vulkan'
+        shell: pwsh
+        run: |
+          $lib = "$env:VULKAN_SDK\Lib\vulkan-1.lib"
+          if (!(Test-Path $lib)) {
+            Write-Error "Vulkan SDK library not found at $lib"
+            exit 1
+          }
+          Write-Host "Vulkan SDK verified: $lib exists"
+          Write-Host "VULKAN_SDK = $env:VULKAN_SDK"
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2.8.0

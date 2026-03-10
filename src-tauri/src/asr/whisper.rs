@@ -950,19 +950,21 @@ fn recognize_with_state(
         .full(params, audio)
         .map_err(|e| anyhow::anyhow!("Whisper inference failed: {e}"))?;
 
-    let num_segments = state.full_n_segments().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let num_segments = state.full_n_segments();
     let mut text = String::new();
     for i in 0..num_segments {
-        if let Ok(seg_text) = state.full_get_segment_text(i) {
-            text.push_str(&seg_text);
+        if let Some(segment) = state.get_segment(i) {
+            if let Ok(seg_text) = segment.to_str() {
+                text.push_str(seg_text);
+            }
         }
     }
 
-    let language = state
-        .full_lang_id_from_state()
-        .ok()
-        .and_then(|id| whisper_rs::get_lang_str(id).map(|s| s.to_string()))
-        .unwrap_or_else(|| "en".to_string());
+    let language = {
+        let id = state.full_lang_id_from_state();
+        whisper_rs::get_lang_str(id).map(|s| s.to_string())
+    }
+    .unwrap_or_else(|| "en".to_string());
 
     Ok(AsrResult {
         text: text.trim().to_string(),
