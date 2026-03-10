@@ -60,6 +60,18 @@ jobs:
           echo "VULKAN_SDK=$sdkPath" >> $env:GITHUB_ENV
           echo "$sdkPath\Bin" >> $env:GITHUB_PATH
 
+      - name: Verify Vulkan SDK installation
+        if: matrix.variant == 'vulkan'
+        shell: pwsh
+        run: |
+          $lib = "$env:VULKAN_SDK\Lib\vulkan-1.lib"
+          if (!(Test-Path $lib)) {
+            Write-Error "Vulkan SDK library not found at $lib"
+            exit 1
+          }
+          Write-Host "Vulkan SDK verified: $lib exists"
+          Write-Host "VULKAN_SDK = $env:VULKAN_SDK"
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2.8.0
         with:
