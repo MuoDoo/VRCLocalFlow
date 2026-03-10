@@ -1,3 +1,3 @@
 pub mod whisper;
 
-pub use whisper::{AsrEngine, AsrResult, resolve_model_path};
+pub use whisper::{AsrEngine, resolve_model_path};
