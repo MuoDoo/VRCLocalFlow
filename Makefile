@@ -88,16 +88,16 @@ build-win: setup
 
 # Windows: build with CUDA GPU acceleration (requires CUDA toolkit)
 build-win-cuda: setup
-	TAURI_CARGO_FLAGS="--features cuda" pnpm tauri build --bundles nsis
+	pnpm tauri build --features cuda --bundles nsis
 
 # Windows: build with Vulkan GPU acceleration (requires Vulkan SDK, works with Nvidia + AMD)
 build-win-vulkan: setup
-	TAURI_CARGO_FLAGS="--features vulkan" pnpm tauri build --bundles nsis
+	pnpm tauri build --features vulkan --bundles nsis
 
 # Dev mode with CUDA GPU acceleration
 dev-cuda: setup
-	TAURI_CARGO_FLAGS="--features cuda" pnpm tauri dev
+	pnpm tauri dev --features cuda
 
 # Dev mode with Vulkan GPU acceleration (Nvidia + AMD)
 dev-vulkan: setup
-	TAURI_CARGO_FLAGS="--features vulkan" pnpm tauri dev
+	pnpm tauri dev --features vulkan
