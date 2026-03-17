@@ -20,7 +20,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.8.0
         with:
           workspaces: .
-          key: all-engines
+          key: sidecar-v2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -38,13 +38,13 @@ jobs:
       # ---- Step 1: Build CPU engine (no GPU SDK needed) ----
       - name: Build rtvt-engine (CPU)
         env:
-          # Only -utf-8 for whisper.cpp Unicode sources.
-          # Do NOT set CMAKE_C_FLAGS_RELEASE — let CMake use its /MD default
-          # to match Rust's dynamic CRT linking on MSVC.
+          # -utf-8 for whisper.cpp Unicode sources
           CFLAGS: -utf-8
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
+          # Force all CMake targets to use /MD (dynamic CRT) matching Rust
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreadedDLL
         run: cargo build -p rtvt-engine --release
 
       - name: Copy CPU engine binary
@@ -67,6 +67,7 @@ jobs:
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreadedDLL
           # Fix ct2rs CMake 3.30+ FindCUDA deprecation:
           # CMP0146=OLD keeps the legacy FindCUDA module that CTranslate2 requires.
           CMAKE_POLICY_DEFAULT_CMP0146: OLD
@@ -95,6 +96,7 @@ jobs:
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreadedDLL
         run: cargo build -p rtvt-engine --release --features vulkan
 
       - name: Copy Vulkan engine binary
