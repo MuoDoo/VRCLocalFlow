@@ -61,6 +61,13 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
+      # CTranslate2 uses the deprecated FindCUDA CMake module which breaks on
+      # CMake 3.30+ (CMP0146 removes FindCUDA; Windows backslash paths cause
+      # "Invalid character escape '\P'" in the fallback module). Downgrade to
+      # CMake 3.29 which still has working FindCUDA.
+      - name: Install CMake 3.29 (FindCUDA compat)
+        run: pip install cmake==3.29.8
+
       - name: Build rtvt-engine (CUDA)
         env:
           CFLAGS: -utf-8
@@ -68,8 +75,6 @@ jobs:
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
           RUSTFLAGS: -C target-feature=+crt-static
-          # Fix ct2rs CMake 3.30+ FindCUDA deprecation
-          CMAKE_POLICY_DEFAULT_CMP0146: OLD
         run: cargo build -p rtvt-engine --release --features cuda
 
       - name: Copy CUDA engine binary
