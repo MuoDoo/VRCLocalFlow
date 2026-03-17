@@ -38,12 +38,13 @@ jobs:
       # ---- Step 1: Build CPU engine (no GPU SDK needed) ----
       - name: Build rtvt-engine (CPU)
         env:
+          # Only -utf-8 for whisper.cpp Unicode sources.
+          # Do NOT set CMAKE_C_FLAGS_RELEASE — let CMake use its /MD default
+          # to match Rust's dynamic CRT linking on MSVC.
           CFLAGS: -utf-8
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
-          CMAKE_C_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
-          CMAKE_CXX_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
         run: cargo build -p rtvt-engine --release
 
       - name: Copy CPU engine binary
@@ -66,8 +67,6 @@ jobs:
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
-          CMAKE_C_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
-          CMAKE_CXX_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
           # Fix ct2rs CMake 3.30+ FindCUDA deprecation:
           # CMP0146=OLD keeps the legacy FindCUDA module that CTranslate2 requires.
           CMAKE_POLICY_DEFAULT_CMP0146: OLD
@@ -96,8 +95,6 @@ jobs:
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
-          CMAKE_C_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
-          CMAKE_CXX_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
         run: cargo build -p rtvt-engine --release --features vulkan
 
       - name: Copy Vulkan engine binary
@@ -110,10 +107,6 @@ jobs:
         env:
           CFLAGS: -utf-8
           CXXFLAGS: -utf-8
-          CMAKE_C_FLAGS: -utf-8
-          CMAKE_CXX_FLAGS: -utf-8
-          CMAKE_C_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
-          CMAKE_CXX_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
           # Override tauri.conf.json to bundle engine binaries as resources
           TAURI_CONFIG: '{"bundle":{"resources":{"binaries/*":"./"}}}'
         run: pnpm tauri build --bundles nsis

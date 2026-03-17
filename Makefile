@@ -4,14 +4,12 @@ SHELL := C:/Program\ Files/Git/bin/bash.exe
 # Use dash (-) prefix instead of slash (/) to prevent MSYS/Git-bash path conversion
 # (e.g. /utf-8 becomes C:/Program Files/Git/utf-8 under MSYS).
 # MSVC cl.exe accepts both - and / as option prefixes.
-# CMAKE_*_RELEASE must include full MSVC defaults (-MT -O2 -Ob2 -DNDEBUG)
-# because setting them replaces cmake's defaults rather than appending.
+# Only set -utf-8; let CMake use its default Release flags (/MD /O2 /Ob2 /DNDEBUG)
+# to match Rust's dynamic CRT linking on MSVC.
 export CFLAGS=-utf-8
 export CXXFLAGS=-utf-8
 export CMAKE_C_FLAGS=-utf-8
 export CMAKE_CXX_FLAGS=-utf-8
-export CMAKE_C_FLAGS_RELEASE=-MT -O2 -Ob2 -DNDEBUG -utf-8
-export CMAKE_CXX_FLAGS_RELEASE=-MT -O2 -Ob2 -DNDEBUG -utf-8
 endif
 
 MODELS_DIR := src-tauri/resources/models
