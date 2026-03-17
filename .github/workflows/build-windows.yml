@@ -66,7 +66,7 @@ jobs:
       # "Invalid character escape '\P'" in the fallback module). Downgrade to
       # CMake 3.29 which still has working FindCUDA.
       - name: Install CMake 3.29 (FindCUDA compat)
-        run: pip install cmake==3.29.8
+        run: pip install cmake==3.29.6
 
       - name: Build rtvt-engine (CUDA)
         env:
