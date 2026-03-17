@@ -10,6 +10,7 @@ interface AppSettings {
   tts_output_device: string;
   vrchat_osc_enabled: boolean;
   vrchat_osc_port: number;
+  backend: string;
 }
 
 export function useSettings() {
@@ -22,6 +23,7 @@ export function useSettings() {
   const [ttsOutputDevice, setTtsOutputDevice] = useState("");
   const [vrchatOscEnabled, setVrchatOscEnabled] = useState(false);
   const [vrchatOscPort, setVrchatOscPort] = useState(9000);
+  const [backend, setBackend] = useState("cpu");
   const isInitialLoad = useRef(true);
 
   // Load settings on mount
@@ -36,6 +38,7 @@ export function useSettings() {
         setTtsOutputDevice(s.tts_output_device || "");
         setVrchatOscEnabled(s.vrchat_osc_enabled ?? false);
         setVrchatOscPort(s.vrchat_osc_port ?? 9000);
+        setBackend(s.backend || "cpu");
         setLoaded(true);
       })
       .catch((e) => {
@@ -60,11 +63,12 @@ export function useSettings() {
       tts_output_device: ttsOutputDevice,
       vrchat_osc_enabled: vrchatOscEnabled,
       vrchat_osc_port: vrchatOscPort,
+      backend: backend,
     };
     invoke("save_settings", { settings }).catch((e) =>
       console.error("Failed to save settings:", e)
     );
-  }, [loaded, selectedDevice, sourceLang, targetLang, ttsEnabled, modelPath, ttsOutputDevice, vrchatOscEnabled, vrchatOscPort]);
+  }, [loaded, selectedDevice, sourceLang, targetLang, ttsEnabled, modelPath, ttsOutputDevice, vrchatOscEnabled, vrchatOscPort, backend]);
 
   return {
     loaded,
@@ -84,5 +88,7 @@ export function useSettings() {
     setVrchatOscEnabled: useCallback((v: boolean) => setVrchatOscEnabled(v), []),
     vrchatOscPort,
     setVrchatOscPort: useCallback((v: number) => setVrchatOscPort(v), []),
+    backend,
+    setBackend: useCallback((v: string) => setBackend(v), []),
   };
 }

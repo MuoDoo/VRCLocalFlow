@@ -14,6 +14,12 @@ import { useSettings } from "./hooks/useSettings";
 
 const NLLB_MODEL_ID = "nllb-200-distilled-600M";
 
+interface BackendInfo {
+  id: string;
+  name: string;
+  available: boolean;
+}
+
 // All language pairs use the single NLLB model
 function resolveRequiredModelIds(source: string, target: string): string[] {
   if (source === target) return [];
@@ -44,6 +50,8 @@ function App() {
     setVrchatOscEnabled,
     vrchatOscPort,
     setVrchatOscPort,
+    backend,
+    setBackend,
   } = useSettings();
 
   // Whisper model management state
@@ -64,6 +72,22 @@ function App() {
     loading: devicesLoading,
     refresh: refreshDevices,
   } = useAudioDevices();
+
+  // Engine backends
+  const [backends, setBackends] = useState<BackendInfo[]>([]);
+
+  const refreshBackends = useCallback(async () => {
+    try {
+      const list = await invoke<BackendInfo[]>("list_backends");
+      setBackends(list);
+    } catch (e) {
+      console.error("Failed to list backends:", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshBackends();
+  }, [refreshBackends]);
 
   // Output devices for TTS
   const [outputDevices, setOutputDevices] = useState<{ name: string }[]>([]);
@@ -236,6 +260,7 @@ function App() {
             tts_output_device: ttsOutputDevice,
             vrchat_osc_enabled: vrchatOscEnabled,
             vrchat_osc_port: vrchatOscPort,
+            backend: backend,
           },
         });
         clear();
@@ -254,6 +279,7 @@ function App() {
     ttsOutputDevice,
     vrchatOscEnabled,
     vrchatOscPort,
+    backend,
     clear,
   ]);
 
@@ -342,6 +368,9 @@ function App() {
         onVrchatOscToggle={setVrchatOscEnabled}
         vrchatOscPort={vrchatOscPort}
         onVrchatOscPortChange={setVrchatOscPort}
+        backends={backends}
+        selectedBackend={backend}
+        onBackendChange={setBackend}
       />
     </div>
   );

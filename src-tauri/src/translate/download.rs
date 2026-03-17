@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 
-use super::nllb::NLLB_MODEL_DIR;
+use super::NLLB_MODEL_DIR;
 
 const HF_ORIGIN: &str = "https://huggingface.co";
 const HF_MIRROR: &str = "https://hf-mirror.com";

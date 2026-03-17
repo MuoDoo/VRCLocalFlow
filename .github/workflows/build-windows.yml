@@ -10,51 +10,17 @@ jobs:
   build-windows:
     runs-on: windows-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: cpu
-            tauri_features: ""
-            artifact_suffix: ""
-          - variant: cuda
-            tauri_features: "--features cuda"
-            artifact_suffix: "-cuda"
-          - variant: vulkan
-            tauri_features: "--features vulkan"
-            artifact_suffix: "-vulkan"
-
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install CUDA Toolkit
-        if: matrix.variant == 'cuda'
-        uses: Jimver/cuda-toolkit@v0.2.30
-        with:
-          cuda: '12.6.3'
-          method: 'network'
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
-
-      - name: Install Vulkan SDK
-        if: matrix.variant == 'vulkan'
-        shell: pwsh
-        run: |
-          $ver = "1.3.290.0"
-          $installer = "$env:TEMP\VulkanSDK-$ver-Installer.exe"
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$ver/windows/VulkanSDK-$ver-Installer.exe" -OutFile $installer
-          Start-Process -FilePath $installer -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait
-          $sdkPath = "C:\VulkanSDK\$ver"
-          echo "VULKAN_SDK=$sdkPath" >> $env:GITHUB_ENV
-          echo "$sdkPath\Bin" >> $env:GITHUB_PATH
-
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2.8.0
         with:
-          workspaces: src-tauri
-          key: ${{ matrix.variant }}
+          workspaces: .
+          key: all-engines
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -69,6 +35,77 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      # ---- Step 1: Build CPU engine (no GPU SDK needed) ----
+      - name: Build rtvt-engine (CPU)
+        env:
+          CFLAGS: -utf-8
+          CXXFLAGS: -utf-8
+          CMAKE_C_FLAGS: -utf-8
+          CMAKE_CXX_FLAGS: -utf-8
+          CMAKE_C_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
+          CMAKE_CXX_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
+        run: cargo build -p rtvt-engine --release
+
+      - name: Copy CPU engine binary
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries
+          Copy-Item target/release/rtvt-engine.exe src-tauri/binaries/rtvt-engine-cpu.exe
+
+      # ---- Step 2: Build CUDA engine ----
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.30
+        with:
+          cuda: '12.6.3'
+          method: 'network'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
+
+      - name: Build rtvt-engine (CUDA)
+        env:
+          CFLAGS: -utf-8
+          CXXFLAGS: -utf-8
+          CMAKE_C_FLAGS: -utf-8
+          CMAKE_CXX_FLAGS: -utf-8
+          CMAKE_C_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
+          CMAKE_CXX_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
+          # Fix ct2rs CMake 3.30+ FindCUDA deprecation:
+          # CMP0146=OLD keeps the legacy FindCUDA module that CTranslate2 requires.
+          CMAKE_POLICY_DEFAULT_CMP0146: OLD
+        run: cargo build -p rtvt-engine --release --features cuda
+
+      - name: Copy CUDA engine binary
+        shell: pwsh
+        run: |
+          Copy-Item target/release/rtvt-engine.exe src-tauri/binaries/rtvt-engine-cuda.exe
+
+      # ---- Step 3: Build Vulkan engine ----
+      - name: Install Vulkan SDK
+        shell: pwsh
+        run: |
+          $ver = "1.3.290.0"
+          $installer = "$env:TEMP\VulkanSDK-$ver-Installer.exe"
+          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$ver/windows/VulkanSDK-$ver-Installer.exe" -OutFile $installer
+          Start-Process -FilePath $installer -ArgumentList "--accept-licenses --default-answer --confirm-command install" -Wait
+          $sdkPath = "C:\VulkanSDK\$ver"
+          echo "VULKAN_SDK=$sdkPath" >> $env:GITHUB_ENV
+          echo "$sdkPath\Bin" >> $env:GITHUB_PATH
+
+      - name: Build rtvt-engine (Vulkan)
+        env:
+          CFLAGS: -utf-8
+          CXXFLAGS: -utf-8
+          CMAKE_C_FLAGS: -utf-8
+          CMAKE_CXX_FLAGS: -utf-8
+          CMAKE_C_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
+          CMAKE_CXX_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
+        run: cargo build -p rtvt-engine --release --features vulkan
+
+      - name: Copy Vulkan engine binary
+        shell: pwsh
+        run: |
+          Copy-Item target/release/rtvt-engine.exe src-tauri/binaries/rtvt-engine-vulkan.exe
+
+      # ---- Step 4: Build Tauri app (UI + audio only, no GPU features) ----
       - name: Build Tauri app (NSIS installer)
         env:
           CFLAGS: -utf-8
@@ -77,11 +114,13 @@ jobs:
           CMAKE_CXX_FLAGS: -utf-8
           CMAKE_C_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
           CMAKE_CXX_FLAGS_RELEASE: -MT -O2 -Ob2 -DNDEBUG -utf-8
-        run: pnpm tauri build ${{ matrix.tauri_features }} --bundles nsis
+          # Override tauri.conf.json to bundle engine binaries as resources
+          TAURI_CONFIG: '{"bundle":{"resources":{"binaries/*":"./"}}}'
+        run: pnpm tauri build --bundles nsis
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rtvt-windows-installer${{ matrix.artifact_suffix }}
-          path: src-tauri/target/release/bundle/nsis/*.exe
+          name: rtvt-windows-installer
+          path: target/release/bundle/nsis/*.exe
           if-no-files-found: error

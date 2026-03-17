@@ -18,10 +18,11 @@ MODELS_DIR := src-tauri/resources/models
 WHISPER_MODEL := $(MODELS_DIR)/ggml-base.bin
 NLLB_MODEL := $(MODELS_DIR)/nllb-200-distilled-600M/model.bin
 
-.PHONY: dev setup models models-whisper models-nllb clean check build-mac build-win build-win-vulkan dev-vulkan check-vulkan
+.PHONY: dev setup models models-whisper models-nllb clean check build-mac build-win \
+        build-engine build-engine-cpu build-engine-cuda build-engine-vulkan build-engines
 
-# Default: setup + run
-dev: setup
+# Default: setup + build engine + run
+dev: setup build-engine
 	pnpm tauri dev
 
 # Install deps + download models
@@ -59,17 +60,36 @@ $(NLLB_MODEL):
 pip-deps:
 	pip install ctranslate2 transformers sentencepiece
 
-# Cargo check only
+# ---- Engine Builds ----
+
+# Build default engine (CPU, for dev mode)
+build-engine:
+	cargo build -p rtvt-engine
+
+# Build CPU engine (release)
+build-engine-cpu:
+	cargo build -p rtvt-engine --release
+
+# Build CUDA engine (release, requires CUDA toolkit)
+build-engine-cuda:
+	cargo build -p rtvt-engine --release --features cuda
+
+# Build Vulkan engine (release, requires Vulkan SDK)
+build-engine-vulkan:
+	cargo build -p rtvt-engine --release --features vulkan
+
+# Build all engine variants (release)
+build-engines: build-engine-cpu build-engine-cuda build-engine-vulkan
+
+# ---- Cargo Check ----
+
+# Cargo check (main app only, no engine)
 check:
-	cd src-tauri && cargo check
+	cargo check -p rtvt
 
-# Cargo check with CUDA GPU acceleration
-check-cuda:
-	cd src-tauri && cargo check --features cuda
-
-# Cargo check with Vulkan GPU acceleration (Nvidia + AMD)
-check-vulkan:
-	cd src-tauri && cargo check --features vulkan
+# Cargo check engine
+check-engine:
+	cargo check -p rtvt-engine
 
 # Clean models (re-download next time)
 clean:
@@ -79,25 +99,13 @@ clean:
 # ---- Release Build ----
 
 # macOS: build .dmg (aarch64)
-build-mac: setup
+build-mac: setup build-engine
 	pnpm tauri build --bundles dmg
 
 # Windows: build NSIS installer (run on Windows natively)
 build-win: setup
 	pnpm tauri build --bundles nsis
 
-# Windows: build with CUDA GPU acceleration (requires CUDA toolkit)
-build-win-cuda: setup
-	pnpm tauri build --features cuda --bundles nsis
-
-# Windows: build with Vulkan GPU acceleration (requires Vulkan SDK, works with Nvidia + AMD)
-build-win-vulkan: setup
-	pnpm tauri build --features vulkan --bundles nsis
-
-# Dev mode with CUDA GPU acceleration
-dev-cuda: setup
-	pnpm tauri dev --features cuda
-
-# Dev mode with Vulkan GPU acceleration (Nvidia + AMD)
-dev-vulkan: setup
-	pnpm tauri dev --features vulkan
+# Dev mode with pre-built engine
+dev-engine: setup
+	pnpm tauri dev

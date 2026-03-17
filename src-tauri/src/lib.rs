@@ -1,5 +1,6 @@
 mod audio;
 mod asr;
+mod engine;
 mod pipeline;
 mod settings;
 mod translate;
@@ -29,7 +30,7 @@ fn start_pipeline(
     // Get audio receiver
     let receiver = capture_state.receiver.clone();
 
-    // Start the pipeline (ASR → translate → TTS)
+    // Start the pipeline (engine sidecar → ASR → translate → TTS)
     let mut pipeline = pipeline_state
         .0
         .lock()
@@ -60,6 +61,31 @@ fn stop_pipeline(
     let _ = audio::capture::stop_capture(capture_state);
 
     Ok(())
+}
+
+/// List available engine backends (CPU, CUDA, Vulkan) based on which binaries are present.
+#[tauri::command]
+fn list_backends(app_handle: tauri::AppHandle) -> Vec<BackendInfo> {
+    let available = engine::detect_available_backends(&app_handle);
+    [
+        engine::EngineBackend::Cpu,
+        engine::EngineBackend::Cuda,
+        engine::EngineBackend::Vulkan,
+    ]
+    .iter()
+    .map(|b| BackendInfo {
+        id: b.as_str().to_string(),
+        name: b.display_name().to_string(),
+        available: available.contains(b),
+    })
+    .collect()
+}
+
+#[derive(serde::Serialize)]
+struct BackendInfo {
+    id: String,
+    name: String,
+    available: bool,
 }
 
 /// Max log file size before rotation (5 MB).
@@ -137,6 +163,7 @@ pub fn run() {
             translate::registry::list_translation_models,
             start_pipeline,
             stop_pipeline,
+            list_backends,
             settings::load_settings,
             settings::save_settings,
         ])

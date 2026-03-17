@@ -21,6 +21,8 @@ pub struct AppSettings {
     pub vrchat_osc_enabled: bool,
     #[serde(default = "default_vrchat_port")]
     pub vrchat_osc_port: u16,
+    #[serde(default = "default_backend")]
+    pub backend: String,
 
     /// Legacy field — kept for backward compatibility during deserialization.
     /// Migrated to source_lang/target_lang on load, never written back.
@@ -30,6 +32,10 @@ pub struct AppSettings {
 
 fn default_vrchat_port() -> u16 {
     9000
+}
+
+fn default_backend() -> String {
+    "cpu".to_string()
 }
 
 fn default_source_lang() -> String {
@@ -55,6 +61,7 @@ impl Default for AppSettings {
             tts_output_device: String::new(),
             vrchat_osc_enabled: false,
             vrchat_osc_port: default_vrchat_port(),
+            backend: default_backend(),
             direction: String::new(),
         }
     }

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use super::nllb::NLLB_MODEL_DIR;
+use super::NLLB_MODEL_DIR;
 
 /// Supported languages for translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

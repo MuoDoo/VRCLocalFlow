@@ -16,6 +16,12 @@ export interface TranslationModelInfo {
   downloaded: boolean;
 }
 
+export interface BackendInfo {
+  id: string;
+  name: string;
+  available: boolean;
+}
+
 const BASE_LANGUAGES = [
   { code: "en", name: "English" },
   { code: "zh", name: "Chinese" },
@@ -54,6 +60,9 @@ interface SettingsPanelProps {
   onVrchatOscToggle: (enabled: boolean) => void;
   vrchatOscPort: number;
   onVrchatOscPortChange: (port: number) => void;
+  backends: BackendInfo[];
+  selectedBackend: string;
+  onBackendChange: (backend: string) => void;
 }
 
 function formatSize(mb: number): string {
@@ -93,6 +102,9 @@ export function SettingsPanel({
   onVrchatOscToggle,
   vrchatOscPort,
   onVrchatOscPortChange,
+  backends,
+  selectedBackend,
+  onBackendChange,
 }: SettingsPanelProps) {
   const languages = BASE_LANGUAGES;
   return (
@@ -129,6 +141,47 @@ export function SettingsPanel({
             loading={devicesLoading}
             onRefresh={onRefreshDevices}
           />
+
+          {/* Engine Backend */}
+          {backends.length > 0 && (
+            <div className="space-y-2">
+              <label className="text-xs text-gray-400 uppercase tracking-wide">
+                Engine Backend
+              </label>
+              <div className="space-y-1">
+                {backends.map((b) => {
+                  const isSelected = selectedBackend === b.id;
+                  return (
+                    <div
+                      key={b.id}
+                      className={`flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors ${
+                        isSelected
+                          ? "bg-blue-600/30 border border-blue-500/50"
+                          : b.available
+                          ? "bg-gray-700 hover:bg-gray-600 border border-transparent cursor-pointer"
+                          : "bg-gray-700/50 border border-transparent opacity-50"
+                      }`}
+                      onClick={() => {
+                        if (b.available) {
+                          onBackendChange(b.id);
+                        }
+                      }}
+                    >
+                      <span className="w-4 text-center flex-shrink-0">
+                        {isSelected && b.available && (
+                          <span className="text-blue-400">&#10003;</span>
+                        )}
+                      </span>
+                      <span className="text-white flex-1">{b.name}</span>
+                      {!b.available && (
+                        <span className="text-gray-500 text-xs">Not installed</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Language Pair */}
           <div className="space-y-2">

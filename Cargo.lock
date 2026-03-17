@@ -3853,28 +3853,42 @@ name = "rtvt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "cocoa",
  "cpal",
  "crossbeam-channel",
- "ct2rs",
  "env_logger",
  "futures-util",
  "log",
- "num_cpus",
  "reqwest 0.12.28",
  "rosc",
  "rubato",
  "screencapturekit",
- "sentencepiece",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tokio",
  "unicode-width",
+ "windows 0.58.0",
+]
+
+[[package]]
+name = "rtvt-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "crossbeam-channel",
+ "ct2rs",
+ "env_logger",
+ "log",
+ "num_cpus",
+ "sentencepiece",
+ "serde",
+ "serde_json",
  "webrtc-vad",
  "whisper-rs",
- "windows 0.58.0",
 ]
 
 [[package]]

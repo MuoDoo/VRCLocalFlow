@@ -1,16 +1,19 @@
+use std::io::BufReader;
 use std::path::PathBuf;
+use std::process::ChildStdout;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use crossbeam_channel::Receiver;
-use log::{error, info};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
-use crate::asr::AsrEngine;
 use crate::audio::playback::AudioPlayer;
-use crate::translate::nllb::Translator;
+use crate::engine::{
+    self, EngineBackend, EngineProcess, EngineResponse, EngineWriter,
+};
 use crate::translate::registry::Language;
 use crate::tts;
 use crate::vrchat;
@@ -47,10 +50,16 @@ pub struct PipelineConfig {
     pub vrchat_osc_enabled: bool,
     #[serde(default = "default_vrchat_port")]
     pub vrchat_osc_port: u16,
+    #[serde(default = "default_backend")]
+    pub backend: String,
 }
 
 fn default_vrchat_port() -> u16 {
     9000
+}
+
+fn default_backend() -> String {
+    "cpu".to_string()
 }
 
 impl PipelineConfig {
@@ -61,21 +70,27 @@ impl PipelineConfig {
     fn target_language(&self) -> Language {
         Language::from_code(&self.target_lang).unwrap_or(Language::Zh)
     }
+
+    fn engine_backend(&self) -> EngineBackend {
+        EngineBackend::from_str(&self.backend).unwrap_or(EngineBackend::Cpu)
+    }
 }
 
 /// Manages the real-time pipeline lifecycle.
 pub struct Pipeline {
     running: Arc<AtomicBool>,
-    asr_engine: Option<AsrEngine>,
-    translate_handle: Option<std::thread::JoinHandle<()>>,
+    engine_process: Option<EngineProcess>,
+    audio_pump_handle: Option<std::thread::JoinHandle<()>>,
+    reader_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Pipeline {
     pub fn new() -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
-            asr_engine: None,
-            translate_handle: None,
+            engine_process: None,
+            audio_pump_handle: None,
+            reader_handle: None,
         }
     }
 
@@ -83,7 +98,7 @@ impl Pipeline {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Start the pipeline: audio capture → ASR → translate → TTS.
+    /// Start the pipeline: audio capture → engine sidecar (ASR + translate) → TTS.
     pub fn start(
         &mut self,
         config: PipelineConfig,
@@ -96,14 +111,50 @@ impl Pipeline {
 
         self.running.store(true, Ordering::SeqCst);
 
-        // Emit running status
         let _ = app_handle.emit(
             "pipeline-status",
             PipelineStatus {
                 status: "running".to_string(),
-                message: "Pipeline started".to_string(),
+                message: "Starting engine...".to_string(),
             },
         );
+
+        // Spawn engine sidecar
+        let backend = config.engine_backend();
+        let mut engine = EngineProcess::spawn(backend, &app_handle)
+            .with_context(|| format!("Failed to spawn {} engine", backend.display_name()))?;
+
+        let writer = engine.writer();
+        let stdout = engine.take_stdout().context("Failed to get engine stdout")?;
+
+        // Send init commands to engine
+        let model_path = if config.model_path.is_empty() {
+            crate::asr::resolve_model_path(&app_handle, "base")
+                .to_string_lossy()
+                .to_string()
+        } else {
+            crate::asr::resolve_model_path(&app_handle, &config.model_path)
+                .to_string_lossy()
+                .to_string()
+        };
+
+        let source = config.source_language();
+        let target = config.target_language();
+
+        writer
+            .send_init_asr(&model_path, source.whisper_code())
+            .context("Failed to send init_asr")?;
+
+        let models_root = resolve_models_root(&app_handle);
+        let models_root_str = models_root
+            .canonicalize()
+            .unwrap_or(models_root)
+            .to_string_lossy()
+            .to_string();
+
+        writer
+            .send_init_translator(&models_root_str, &config.source_lang, &config.target_lang)
+            .context("Failed to send init_translator")?;
 
         // Configure TTS
         tts::set_enabled(config.tts_enabled);
@@ -120,10 +171,7 @@ impl Pipeline {
             None
         };
 
-        let source = config.source_language();
-        let target = config.target_language();
-
-        // Create AudioPlayer for TTS output if a device is configured
+        // Create AudioPlayer for TTS output
         let player = if config.tts_enabled && !config.tts_output_device.is_empty() {
             match AudioPlayer::new(&config.tts_output_device) {
                 Ok(p) => {
@@ -136,10 +184,7 @@ impl Pipeline {
                         "pipeline-status",
                         PipelineStatus {
                             status: "running".to_string(),
-                            message: format!(
-                                "Warning: TTS output device unavailable ({})",
-                                e
-                            ),
+                            message: format!("Warning: TTS output device unavailable ({e})"),
                         },
                     );
                     None
@@ -151,38 +196,44 @@ impl Pipeline {
 
         let tts_voice = target.tts_voice().to_string();
 
-        // Resolve model ID to actual path
-        let model_path = if config.model_path.is_empty() {
-            None
-        } else {
-            let resolved = crate::asr::resolve_model_path(&app_handle, &config.model_path);
-            Some(resolved.to_string_lossy().to_string())
-        };
-
-        // Start ASR engine with explicit source language
-        let mut asr_engine = AsrEngine::new(model_path, Some(source.whisper_code().to_string()));
-        asr_engine
-            .start(audio_receiver, app_handle.clone())
-            .context("Failed to start ASR engine")?;
-
-        // Start translate+TTS loop
-        let running = self.running.clone();
-
-        let ah = app_handle.clone();
-        let translate_handle = std::thread::Builder::new()
-            .name("pipeline-translate".into())
+        // Spawn audio pump thread: sends audio chunks to engine
+        let pump_writer = writer.clone();
+        let pump_running = self.running.clone();
+        let audio_pump_handle = std::thread::Builder::new()
+            .name("audio-pump".into())
             .spawn(move || {
-                translate_loop(ah, running, source, target, tts_voice, player, scroll_controller);
+                audio_pump_loop(audio_receiver, pump_writer, pump_running);
             })
-            .context("Failed to spawn translate thread")?;
+            .context("Failed to spawn audio pump thread")?;
 
-        self.asr_engine = Some(asr_engine);
-        self.translate_handle = Some(translate_handle);
+        // Spawn response reader thread: reads engine output, dispatches events
+        let reader_writer = writer.clone();
+        let reader_running = self.running.clone();
+        let reader_ah = app_handle.clone();
+        let reader_handle = std::thread::Builder::new()
+            .name("engine-reader".into())
+            .spawn(move || {
+                engine_reader_loop(
+                    stdout,
+                    reader_writer,
+                    reader_ah,
+                    reader_running,
+                    tts_voice,
+                    player,
+                    scroll_controller,
+                );
+            })
+            .context("Failed to spawn engine reader thread")?;
+
+        self.engine_process = Some(engine);
+        self.audio_pump_handle = Some(audio_pump_handle);
+        self.reader_handle = Some(reader_handle);
 
         info!(
-            "Pipeline started: {} → {}",
+            "Pipeline started: {} → {} (backend={})",
             source.display_name(),
-            target.display_name()
+            target.display_name(),
+            backend.display_name()
         );
         Ok(())
     }
@@ -194,13 +245,16 @@ impl Pipeline {
 
         self.running.store(false, Ordering::SeqCst);
 
-        // Stop ASR
-        if let Some(mut engine) = self.asr_engine.take() {
-            engine.stop();
+        // Kill engine process (sends shutdown, then force-kills)
+        if let Some(mut engine) = self.engine_process.take() {
+            engine.kill();
         }
 
-        // Wait for translate thread
-        if let Some(handle) = self.translate_handle.take() {
+        // Wait for threads to finish
+        if let Some(handle) = self.audio_pump_handle.take() {
+            let _ = handle.join();
+        }
+        if let Some(handle) = self.reader_handle.take() {
             let _ = handle.join();
         }
 
@@ -219,147 +273,144 @@ impl Pipeline {
 impl Drop for Pipeline {
     fn drop(&mut self) {
         self.running.store(false, Ordering::SeqCst);
-        if let Some(mut engine) = self.asr_engine.take() {
-            engine.stop();
+        if let Some(mut engine) = self.engine_process.take() {
+            engine.kill();
         }
     }
 }
 
-/// Translate loop: listens for asr-result events via Tauri listener,
-/// translates them, emits translate-result, and optionally runs TTS.
-fn translate_loop(
+/// Audio pump: reads audio chunks from capture, sends to engine as base64 JSON.
+fn audio_pump_loop(
+    audio_rx: Receiver<Vec<f32>>,
+    writer: EngineWriter,
+    running: Arc<AtomicBool>,
+) {
+    while running.load(Ordering::SeqCst) {
+        match audio_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(chunk) => {
+                if let Err(e) = writer.send_asr_audio(&chunk) {
+                    if running.load(Ordering::SeqCst) {
+                        error!("Failed to send audio to engine: {e}");
+                    }
+                    break;
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                info!("Audio channel disconnected");
+                break;
+            }
+        }
+    }
+}
+
+/// Engine reader: reads JSON responses from engine stdout, dispatches Tauri events.
+fn engine_reader_loop(
+    mut stdout: BufReader<ChildStdout>,
+    writer: EngineWriter,
     app_handle: AppHandle,
     running: Arc<AtomicBool>,
-    source: Language,
-    target: Language,
     tts_voice: String,
     player: Option<AudioPlayer>,
     scroll_controller: Option<ScrollController>,
 ) {
-    // Resolve and load translation models
-    let models_root = resolve_models_root(&app_handle);
-    let models_root_abs = models_root.canonicalize().unwrap_or_else(|_| models_root.clone());
-    info!("Loading translation models from {:?} (resolved: {:?})", models_root, models_root_abs);
-
-    let translator = match Translator::for_pair(&models_root, source, target) {
-        Ok(t) => {
-            info!("Translation models loaded successfully");
-            let _ = app_handle.emit(
-                "pipeline-status",
-                PipelineStatus {
-                    status: "running".to_string(),
-                    message: "Translation models loaded".to_string(),
-                },
-            );
-            Some(t)
-        }
-        Err(e) => {
-            error!("Failed to load translation models: {e:#}. Translation disabled.");
-            let _ = app_handle.emit(
-                "pipeline-status",
-                PipelineStatus {
-                    status: "warning".to_string(),
-                    message: format!("Translation unavailable: {e}"),
-                },
-            );
-            None
-        }
-    };
-
-    // Channel to receive ASR results from the Tauri event listener
-    let (tx, rx) = crossbeam_channel::unbounded::<String>();
-
-    // Subscribe to asr-result events emitted by the ASR engine
-    let tx_clone = tx.clone();
-    let _listener_id = app_handle.listen("asr-result", move |event: tauri::Event| {
-        // event.payload() is a JSON string like {"text":"hello","language":"en"}
-        if let Ok(result) = serde_json::from_str::<serde_json::Value>(event.payload()) {
-            let text = result
-                .get("text")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if !text.is_empty() {
-                let _ = tx_clone.send(text);
-            }
-        }
-    });
-
     let mut segment_counter: u64 = 0;
 
     while running.load(Ordering::SeqCst) {
-        match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-            Ok(text) => {
-                segment_counter += 1;
-                info!("Translating segment {segment_counter}: {text}");
+        match engine::read_response(&mut stdout) {
+            Ok(response) => match response {
+                EngineResponse::Ok { .. } => {
+                    // Init acknowledgment — update status
+                }
+                EngineResponse::Error { error } => {
+                    warn!("Engine error: {error}");
+                    let _ = app_handle.emit(
+                        "pipeline-status",
+                        PipelineStatus {
+                            status: "warning".to_string(),
+                            message: format!("Engine: {error}"),
+                        },
+                    );
+                }
+                EngineResponse::Capabilities { capabilities } => {
+                    info!(
+                        "Engine capabilities: gpu={}, vram={}MB",
+                        capabilities.gpu, capabilities.vram_mb
+                    );
+                }
+                EngineResponse::AsrResult { asr_result } => {
+                    segment_counter += 1;
+                    info!(
+                        "ASR segment {}: {} (lang={})",
+                        segment_counter, asr_result.text, asr_result.language
+                    );
 
-                // Re-emit ASR result with segment_id so frontend can pair it
-                let _ = app_handle.emit(
-                    "asr-segment",
-                    AsrSegment {
-                        text: text.clone(),
-                        segment_id: segment_counter,
-                    },
-                );
+                    // Emit ASR segment for frontend
+                    let _ = app_handle.emit(
+                        "asr-segment",
+                        AsrSegment {
+                            text: asr_result.text.clone(),
+                            segment_id: segment_counter,
+                        },
+                    );
 
-                if let Some(ref translator) = translator {
-                    let t_start = std::time::Instant::now();
-                    match translator.translate(&text) {
-                        Ok(translated) => {
-                            info!("Translation result ({}ms): {translated}", t_start.elapsed().as_millis());
-                            let _ = app_handle.emit(
-                                "translate-result",
-                                TranslateResult {
-                                    text: translated.clone(),
-                                    segment_id: segment_counter,
-                                },
-                            );
-
-                            if let Err(e) = tts::speak(&translated, &tts_voice, player.as_ref()) {
-                                error!("TTS error: {e}");
-                            }
-
-                            if let Some(ref controller) = scroll_controller {
-                                controller.update(&text, &translated, segment_counter);
-                            }
-                        }
-                        Err(e) => {
-                            error!("Translation error: {e:#}");
-                        }
+                    // Send translation request
+                    if let Err(e) = writer.send_translate(&asr_result.text) {
+                        error!("Failed to send translate command: {e}");
                     }
                 }
+                EngineResponse::TranslateResult { translate_result } => {
+                    info!("Translation: {}", translate_result.text);
+
+                    // Emit translate result for frontend
+                    let _ = app_handle.emit(
+                        "translate-result",
+                        TranslateResult {
+                            text: translate_result.text.clone(),
+                            segment_id: segment_counter,
+                        },
+                    );
+
+                    // TTS
+                    if let Err(e) =
+                        tts::speak(&translate_result.text, &tts_voice, player.as_ref())
+                    {
+                        error!("TTS error: {e}");
+                    }
+
+                    // VRChat OSC
+                    if let Some(ref controller) = scroll_controller {
+                        // We need the original text for VRChat display.
+                        // The reader doesn't have it at this point, so just use translated.
+                        controller.update("", &translate_result.text, segment_counter);
+                    }
+                }
+            },
+            Err(e) => {
+                if running.load(Ordering::SeqCst) {
+                    error!("Engine read error: {e}");
+                }
+                break;
             }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
     }
 }
 
 /// Resolve the models root directory.
-/// In dev mode: `src-tauri/resources/models/`
-/// In packaged app: resource dir from Tauri.
-fn resolve_models_root(app_handle: &AppHandle) -> PathBuf {
-    // Try the Tauri resource dir (works in packaged app)
+pub fn resolve_models_root(app_handle: &AppHandle) -> PathBuf {
     if let Ok(resource_dir) = app_handle.path().resource_dir() {
         let models = resource_dir.join("models");
         if models.exists() {
             return models;
         }
     }
-
-    // Dev mode fallback: try relative to CWD
     let dev_path = PathBuf::from("resources/models");
     if dev_path.exists() {
         return dev_path;
     }
-
-    // Try relative to src-tauri
     let src_tauri_path = PathBuf::from("src-tauri/resources/models");
     if src_tauri_path.exists() {
         return src_tauri_path;
     }
-
-    // Last resort
     dev_path
 }
