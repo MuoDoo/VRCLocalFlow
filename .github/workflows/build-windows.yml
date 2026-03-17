@@ -59,7 +59,7 @@ jobs:
         with:
           cuda: '12.6.3'
           method: 'network'
-          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "thrust", "visual_studio_integration"]'
 
       # FindCUDA.cmake fails on Windows when CUDA_PATH contains backslashes
       # ("Invalid character escape '\P'" from C:\Program Files\...).
