@@ -61,12 +61,15 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
 
-      # CTranslate2 uses the deprecated FindCUDA CMake module which breaks on
-      # CMake 3.30+ (CMP0146 removes FindCUDA; Windows backslash paths cause
-      # "Invalid character escape '\P'" in the fallback module). Downgrade to
-      # CMake 3.29 which still has working FindCUDA.
-      - name: Install CMake 3.29 (FindCUDA compat)
-        run: pip install cmake==3.29.6
+      # FindCUDA.cmake fails on Windows when CUDA_PATH contains backslashes
+      # ("Invalid character escape '\P'" from C:\Program Files\...).
+      # Normalize to forward slashes so CMake's string parser doesn't choke.
+      - name: Normalize CUDA_PATH for CMake
+        shell: pwsh
+        run: |
+          $fixed = $env:CUDA_PATH -replace '\\', '/'
+          echo "CUDA_PATH=$fixed" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_V12_6=$fixed" >> $env:GITHUB_ENV
 
       - name: Build rtvt-engine (CUDA)
         env:
