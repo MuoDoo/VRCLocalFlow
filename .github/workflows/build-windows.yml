@@ -78,6 +78,9 @@ jobs:
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
           RUSTFLAGS: -C target-feature=+crt-static
+          # nvcc ignores Rust's +crt-static and defaults to /MD (dynamic CRT).
+          # Pass /MT to nvcc's host compiler so CUDA objects match ct2rs's /MT.
+          CUDAFLAGS: -Xcompiler -MT
         run: cargo build -p rtvt-engine --release --features cuda
 
       - name: Copy CUDA engine binary
