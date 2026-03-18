@@ -20,7 +20,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.8.0
         with:
           workspaces: .
-          key: sidecar-v3
+          key: sidecar-v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -78,9 +78,6 @@ jobs:
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
           RUSTFLAGS: -C target-feature=+crt-static
-          # nvcc ignores Rust's +crt-static and defaults to /MD (dynamic CRT).
-          # Pass /MT to nvcc's host compiler so CUDA objects match ct2rs's /MT.
-          CUDAFLAGS: -Xcompiler -MT
         run: cargo build -p rtvt-engine --release --features cuda
 
       - name: Copy CUDA engine binary
