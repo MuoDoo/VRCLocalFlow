@@ -14,5 +14,11 @@ fn main() {
         // identical and get resolved by the static libs.
         println!("cargo:rustc-link-arg=/NODEFAULTLIB:msvcrt");
         println!("cargo:rustc-link-arg=/NODEFAULTLIB:msvcprt");
+
+        // /FORCE turns the remaining LNK2038 metadata mismatches (between
+        // CUDA /MD objects and ct2rs /MT objects) into warnings instead of
+        // errors. Combined with NODEFAULTLIB above, this is safe — all
+        // symbols resolve from the static CRT.
+        println!("cargo:rustc-link-arg=/FORCE");
     }
 }
