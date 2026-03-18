@@ -20,7 +20,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.8.0
         with:
           workspaces: .
-          key: sidecar-v4
+          key: sidecar-v5
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -78,6 +78,9 @@ jobs:
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
           RUSTFLAGS: -C target-feature=+crt-static
+          # cmake Rust crate sets /MT for C/CXX but not for CUDA compilation.
+          # CUDAFLAGS initializes CMAKE_CUDA_FLAGS so nvcc passes /MT to MSVC.
+          CUDAFLAGS: -Xcompiler -MT
         run: cargo build -p rtvt-engine --release --features cuda
 
       - name: Copy CUDA engine binary
