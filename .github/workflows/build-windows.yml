@@ -6,6 +6,9 @@ on:
     tags:
       - "v*"
 
+env:
+  TARGET_TRIPLE: x86_64-pc-windows-msvc
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -35,9 +38,11 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      - name: Create binaries directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path src-tauri/binaries
+
       # ---- Step 1: Build CPU engine (no GPU SDK needed) ----
-      # ct2rs forces /MT (static CRT). +crt-static makes Rust and whisper-rs
-      # also use /MT. build.rs suppresses dynamic CRT import libs for CUDA compat.
       - name: Build rtvt-engine (CPU)
         env:
           CFLAGS: -utf-8
@@ -50,8 +55,7 @@ jobs:
       - name: Copy CPU engine binary
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path src-tauri/binaries
-          Copy-Item target/release/rtvt-engine.exe src-tauri/binaries/rtvt-engine-cpu.exe
+          Copy-Item target/release/rtvt-engine.exe "src-tauri/binaries/rtvt-engine-cpu-${env:TARGET_TRIPLE}.exe"
 
       # ---- Step 2: Build CUDA engine ----
       - name: Install CUDA Toolkit
@@ -69,10 +73,7 @@ jobs:
           echo "CUDA_PATH=$fixed" >> $env:GITHUB_ENV
           echo "CUDA_PATH_V12_6=$fixed" >> $env:GITHUB_ENV
 
-      # CUDA build is currently blocked by ct2rs hardcoding .static_crt(true)
-      # which forces /MT, while nvcc always compiles host code with /MD.
-      # MSVC linker refuses to mix /MT and /MD objects (LNK2038/LNK1319).
-      # TODO: Fix upstream (ct2rs) or use cargo patch to remove static_crt.
+      # CUDA build blocked by ct2rs .static_crt(true) vs nvcc /MD mismatch.
       - name: Build rtvt-engine (CUDA)
         continue-on-error: true
         env:
@@ -87,7 +88,15 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          Copy-Item target/release/rtvt-engine.exe src-tauri/binaries/rtvt-engine-cuda.exe
+          if (Test-Path target/release/rtvt-engine.exe) {
+            $size = (Get-Item target/release/rtvt-engine.exe).Length
+            # Only copy if it's a CUDA build (larger than CPU-only, >30MB indicates CUDA linked)
+            if ($size -gt 30MB) {
+              Copy-Item target/release/rtvt-engine.exe "src-tauri/binaries/rtvt-engine-cuda-${env:TARGET_TRIPLE}.exe"
+            } else {
+              Write-Host "Skipping CUDA copy - binary appears to be from previous non-CUDA build"
+            }
+          }
 
       # ---- Step 3: Build Vulkan engine ----
       - name: Install Vulkan SDK
@@ -113,15 +122,29 @@ jobs:
       - name: Copy Vulkan engine binary
         shell: pwsh
         run: |
-          Copy-Item target/release/rtvt-engine.exe src-tauri/binaries/rtvt-engine-vulkan.exe
+          Copy-Item target/release/rtvt-engine.exe "src-tauri/binaries/rtvt-engine-vulkan-${env:TARGET_TRIPLE}.exe"
 
-      # ---- Step 4: Build Tauri app (UI + audio only, no GPU features) ----
+      # ---- Step 4: List bundled binaries ----
+      - name: List engine binaries
+        shell: pwsh
+        run: Get-ChildItem src-tauri/binaries/ | Format-Table Name, Length
+
+      # ---- Step 5: Build Tauri app (UI + audio only, no GPU features) ----
       - name: Build Tauri app (NSIS installer)
         env:
           CFLAGS: -utf-8
           CXXFLAGS: -utf-8
-          # Override tauri.conf.json to bundle engine binaries as resources
-          TAURI_CONFIG: '{"bundle":{"resources":{"binaries/*":"./"}}}'
+          # Use externalBin to bundle engine sidecar binaries into the installer.
+          # Tauri expects binaries at src-tauri/binaries/{name}-{target_triple}.exe
+          TAURI_CONFIG: >-
+            {
+              "bundle": {
+                "externalBin": [
+                  "binaries/rtvt-engine-cpu",
+                  "binaries/rtvt-engine-vulkan"
+                ]
+              }
+            }
         run: pnpm tauri build --bundles nsis
 
       - name: Upload installer artifact
