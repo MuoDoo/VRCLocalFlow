@@ -78,10 +78,10 @@ jobs:
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
           RUSTFLAGS: -C target-feature=+crt-static
-          # cmake Rust crate sets /MT for C/CXX but not for CUDA.
-          # whisper-rs-sys passes CMAKE_* env vars as cmake defines,
-          # so this becomes -DCMAKE_CUDA_FLAGS="-Xcompiler -MT".
-          CMAKE_CUDA_FLAGS: -Xcompiler -MT
+          # whisper-rs-sys passes CMAKE_* env vars as cmake -D defines.
+          # CMAKE_MSVC_RUNTIME_LIBRARY controls CRT for ALL languages
+          # (C, CXX, CUDA) when CMP0091=NEW. "MultiThreaded" = /MT.
+          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
         run: cargo build -p rtvt-engine --release --features cuda
 
       - name: Copy CUDA engine binary
