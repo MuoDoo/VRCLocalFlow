@@ -20,7 +20,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.8.0
         with:
           workspaces: .
-          key: sidecar-v6
+          key: sidecar-v7
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,15 +36,15 @@ jobs:
         run: pnpm install
 
       # ---- Step 1: Build CPU engine (no GPU SDK needed) ----
-      # ct2rs forces /MT (static CRT) while Rust defaults to /MD (dynamic CRT).
-      # The engine build.rs uses /FORCE to let the linker produce a valid binary
-      # despite the CRT metadata mismatch (LNK2038). At runtime both work fine.
+      # ct2rs forces /MT (static CRT). +crt-static makes Rust and whisper-rs
+      # also use /MT. build.rs suppresses dynamic CRT import libs for CUDA compat.
       - name: Build rtvt-engine (CPU)
         env:
           CFLAGS: -utf-8
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build -p rtvt-engine --release
 
       - name: Copy CPU engine binary
@@ -75,6 +75,7 @@ jobs:
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build -p rtvt-engine --release --features cuda
 
       - name: Copy CUDA engine binary
@@ -100,6 +101,7 @@ jobs:
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build -p rtvt-engine --release --features vulkan
 
       - name: Copy Vulkan engine binary
