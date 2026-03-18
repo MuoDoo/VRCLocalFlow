@@ -20,7 +20,7 @@ jobs:
         uses: Swatinem/rust-cache@v2.8.0
         with:
           workspaces: .
-          key: sidecar-v5
+          key: sidecar-v6
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -36,15 +36,15 @@ jobs:
         run: pnpm install
 
       # ---- Step 1: Build CPU engine (no GPU SDK needed) ----
-      # ct2rs requires static CRT (+crt-static) on Windows — it compiles
-      # CTranslate2 with /MT. We must match by telling Rust to also use /MT.
+      # ct2rs forces /MT (static CRT) while Rust defaults to /MD (dynamic CRT).
+      # The engine build.rs uses /FORCE to let the linker produce a valid binary
+      # despite the CRT metadata mismatch (LNK2038). At runtime both work fine.
       - name: Build rtvt-engine (CPU)
         env:
           CFLAGS: -utf-8
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
-          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build -p rtvt-engine --release
 
       - name: Copy CPU engine binary
@@ -61,9 +61,7 @@ jobs:
           method: 'network'
           sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "curand", "curand_dev", "thrust", "visual_studio_integration"]'
 
-      # FindCUDA.cmake fails on Windows when CUDA_PATH contains backslashes
-      # ("Invalid character escape '\P'" from C:\Program Files\...).
-      # Normalize to forward slashes so CMake's string parser doesn't choke.
+      # FindCUDA.cmake fails when CUDA_PATH has backslashes (\P escape error).
       - name: Normalize CUDA_PATH for CMake
         shell: pwsh
         run: |
@@ -77,11 +75,6 @@ jobs:
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
-          RUSTFLAGS: -C target-feature=+crt-static
-          # whisper-rs-sys passes CMAKE_* env vars as cmake -D defines.
-          # CMAKE_MSVC_RUNTIME_LIBRARY controls CRT for ALL languages
-          # (C, CXX, CUDA) when CMP0091=NEW. "MultiThreaded" = /MT.
-          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
         run: cargo build -p rtvt-engine --release --features cuda
 
       - name: Copy CUDA engine binary
@@ -107,7 +100,6 @@ jobs:
           CXXFLAGS: -utf-8
           CMAKE_C_FLAGS: -utf-8
           CMAKE_CXX_FLAGS: -utf-8
-          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build -p rtvt-engine --release --features vulkan
 
       - name: Copy Vulkan engine binary
