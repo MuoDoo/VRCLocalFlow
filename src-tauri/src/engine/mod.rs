@@ -181,7 +181,7 @@ impl EngineProcess {
         let mut cmd = Command::new(&binary_path);
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::piped());
 
         // For CUDA backend, add CUDA toolkit bin/ to PATH so cublas64_12.dll etc. are found.
         if backend == EngineBackend::Cuda {
@@ -203,6 +203,25 @@ impl EngineProcess {
 
         let stdin = child.stdin.take().context("Failed to get engine stdin")?;
         let stdout = child.stdout.take().context("Failed to get engine stdout")?;
+        let stderr = child.stderr.take();
+
+        // Forward engine stderr to the app logger so engine logs aren't lost
+        // on Windows GUI apps (which have no visible console).
+        if let Some(stderr) = stderr {
+            let backend_name = backend.as_str().to_string();
+            std::thread::Builder::new()
+                .name(format!("engine-stderr-{}", backend.as_str()))
+                .spawn(move || {
+                    let reader = BufReader::new(stderr);
+                    for line in reader.lines() {
+                        match line {
+                            Ok(line) => info!("[engine-{}] {}", backend_name, line),
+                            Err(_) => break,
+                        }
+                    }
+                })
+                .ok();
+        }
 
         info!("Engine process started (pid={})", child.id());
 

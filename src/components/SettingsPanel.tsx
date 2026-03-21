@@ -173,7 +173,18 @@ export function SettingsPanel({
                         )}
                       </span>
                       <span className="text-white flex-1">{b.name}</span>
-                      {!b.available && (
+                      {!b.available && b.id === "cuda" && (
+                        <a
+                          href="https://developer.nvidia.com/cuda-toolkit"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:text-blue-300 text-xs underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Install CUDA
+                        </a>
+                      )}
+                      {!b.available && b.id !== "cuda" && (
                         <span className="text-gray-500 text-xs">Not installed</span>
                       )}
                     </div>

@@ -73,6 +73,28 @@ function App() {
     refresh: refreshDevices,
   } = useAudioDevices();
 
+  // Pipeline status from backend (errors, warnings)
+  const [pipelineMessage, setPipelineMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unlisten = listen<{ status: string; message: string }>(
+      "pipeline-status",
+      (event) => {
+        const { status, message } = event.payload;
+        if (status === "warning" || status === "error") {
+          setError(message);
+        }
+        setPipelineMessage(message);
+        if (status === "stopped") {
+          setRunning(false);
+        }
+      },
+    );
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
   // Engine backends
   const [backends, setBackends] = useState<BackendInfo[]>([]);
 
@@ -333,7 +355,7 @@ function App() {
       <SubtitleOverlay entries={entries} />
 
       {/* Status bar */}
-      <StatusBar running={running} error={error} />
+      <StatusBar running={running} error={error} message={pipelineMessage} />
 
       {/* Settings drawer */}
       <SettingsPanel
