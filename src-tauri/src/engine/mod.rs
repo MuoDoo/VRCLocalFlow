@@ -235,23 +235,35 @@ fn resolve_engine_binary(
     app_handle: &tauri::AppHandle,
 ) -> Result<PathBuf> {
     let exe_ext = if cfg!(target_os = "windows") { ".exe" } else { "" };
-    let prod_name = format!("rtvt-engine-{}{exe_ext}", backend.as_str());
+    let base_name = format!("rtvt-engine-{}", backend.as_str());
+
+    // Two possible filenames:
+    // 1. With target triple (Tauri externalBin convention): rtvt-engine-cpu-x86_64-pc-windows-msvc.exe
+    // 2. Without target triple (plain/manual install): rtvt-engine-cpu.exe
+    let triple = env!("TARGET_TRIPLE");
+    let sidecar_name = format!("{base_name}-{triple}{exe_ext}");
+    let plain_name = format!("{base_name}{exe_ext}");
+    let candidates = [&sidecar_name, &plain_name];
 
     // 1. Same directory as main executable (production / bundled app)
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(dir) = exe_path.parent() {
-            let candidate = dir.join(&prod_name);
-            if candidate.exists() {
-                return Ok(candidate);
+            for name in &candidates {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    return Ok(candidate);
+                }
             }
         }
     }
 
     // 2. Tauri resource directory (production / bundled app)
     if let Ok(resource_dir) = app_handle.path().resource_dir() {
-        let candidate = resource_dir.join(&prod_name);
-        if candidate.exists() {
-            return Ok(candidate);
+        for name in &candidates {
+            let candidate = resource_dir.join(name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
         }
     }
 
@@ -272,8 +284,11 @@ fn resolve_engine_binary(
 
     anyhow::bail!(
         "Engine binary not found for backend '{}'. \
+         Looked for '{}' and '{}'. \
          In dev mode, run: cargo build -p rtvt-engine",
-        backend.as_str()
+        backend.as_str(),
+        sidecar_name,
+        plain_name,
     )
 }
 

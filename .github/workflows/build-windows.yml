@@ -137,21 +137,26 @@ jobs:
 
       # ---- Step 5: Build Tauri app (UI + audio only, no GPU features) ----
       - name: Build Tauri app (NSIS installer)
+        shell: pwsh
         env:
           CFLAGS: -utf-8
           CXXFLAGS: -utf-8
-          # Use externalBin to bundle engine sidecar binaries into the installer.
-          # Tauri expects binaries at src-tauri/binaries/{name}-{target_triple}.exe
-          TAURI_CONFIG: >-
-            {
-              "bundle": {
-                "externalBin": [
-                  "binaries/rtvt-engine-cpu",
-                  "binaries/rtvt-engine-vulkan"
-                ]
-              }
+        run: |
+          # Detect which engine binaries were built successfully
+          $bins = @()
+          foreach ($variant in @("cpu", "cuda", "vulkan")) {
+            $path = "src-tauri/binaries/rtvt-engine-$variant-${env:TARGET_TRIPLE}.exe"
+            if (Test-Path $path) {
+              $bins += "binaries/rtvt-engine-$variant"
+              $size = [math]::Round((Get-Item $path).Length / 1MB, 1)
+              Write-Host "  Bundle: rtvt-engine-$variant ($size MB)"
             }
-        run: pnpm tauri build --bundles nsis
+          }
+          # Write config to file (avoids PowerShell JSON quoting issues with CLI args)
+          @{ bundle = @{ externalBin = $bins } } | ConvertTo-Json -Depth 3 |
+            Set-Content -Path bundle-config.json -Encoding utf8
+          Write-Host "Bundle config: $(Get-Content bundle-config.json -Raw)"
+          pnpm tauri build --bundles nsis --config bundle-config.json
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
