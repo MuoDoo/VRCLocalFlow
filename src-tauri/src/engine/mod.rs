@@ -178,12 +178,28 @@ impl EngineProcess {
         let binary_path = resolve_engine_binary(backend, app_handle)?;
         info!("Spawning engine ({}) from: {:?}", backend.as_str(), binary_path);
 
-        let mut child = Command::new(&binary_path)
-            .stdin(Stdio::piped())
+        let mut cmd = Command::new(&binary_path);
+        cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .with_context(|| format!("Failed to spawn engine binary: {:?}", binary_path))?;
+            .stderr(Stdio::inherit());
+
+        // For CUDA backend, add CUDA toolkit bin/ to PATH so cublas64_12.dll etc. are found.
+        if backend == EngineBackend::Cuda {
+            if let Some(path) = cuda_library_path() {
+                let current = std::env::var("PATH").unwrap_or_default();
+                let sep = if cfg!(target_os = "windows") { ";" } else { ":" };
+                cmd.env("PATH", format!("{}{sep}{current}", path.display()));
+                info!("Added CUDA library path to engine PATH: {:?}", path);
+            } else {
+                warn!("CUDA backend selected but CUDA toolkit not found. \
+                       Engine may fail to load cublas64_12.dll. \
+                       Install CUDA Toolkit or set CUDA_PATH.");
+            }
+        }
+
+        let mut child = cmd.spawn()
+            .with_context(|| format!("Failed to spawn engine binary: {:?}. \
+                For CUDA backend, ensure CUDA Toolkit is installed.", binary_path))?;
 
         let stdin = child.stdin.take().context("Failed to get engine stdin")?;
         let stdout = child.stdout.take().context("Failed to get engine stdout")?;
@@ -298,6 +314,36 @@ pub fn detect_available_backends(app_handle: &tauri::AppHandle) -> Vec<EngineBac
     all.into_iter()
         .filter(|b| resolve_engine_binary(*b, app_handle).is_ok())
         .collect()
+}
+
+/// Find CUDA toolkit library path for runtime DLL loading.
+fn cuda_library_path() -> Option<PathBuf> {
+    // 1. CUDA_PATH env var (set by CUDA Toolkit installer)
+    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
+        let bin = PathBuf::from(&cuda_path).join("bin");
+        if bin.is_dir() {
+            return Some(bin);
+        }
+    }
+
+    // 2. Scan standard Windows install locations
+    #[cfg(target_os = "windows")]
+    {
+        let base = "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA";
+        if let Ok(entries) = std::fs::read_dir(base) {
+            // Pick the newest version (reverse-sorted by name)
+            let mut versions: Vec<_> = entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().join("bin").is_dir())
+                .collect();
+            versions.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+            if let Some(entry) = versions.first() {
+                return Some(entry.path().join("bin"));
+            }
+        }
+    }
+
+    None
 }
 
 /// Read one response line from the engine stdout.
