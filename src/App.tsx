@@ -313,7 +313,14 @@ function App() {
     );
   }
 
-  const canStart = allTranslationModelsReady;
+  const selectedWhisperModel = models.find((m) => m.id === modelPath);
+  const whisperReady = selectedWhisperModel?.downloaded ?? false;
+  const canStart = allTranslationModelsReady && whisperReady;
+  const startDisabledReason = !canStart
+    ? !whisperReady
+      ? `Whisper model "${modelPath}" not downloaded`
+      : "Required translation models not found"
+    : undefined;
 
   return (
     <div className="h-screen flex flex-col bg-gray-900 text-white select-none">
@@ -333,11 +340,7 @@ function App() {
                 ? "bg-green-600 hover:bg-green-500 text-white"
                 : "bg-gray-600 text-gray-400 cursor-not-allowed"
             }`}
-            title={
-              !running && !canStart
-                ? "Required translation models not found"
-                : undefined
-            }
+            title={!running ? startDisabledReason : undefined}
           >
             {running ? "Stop" : "Start"}
           </button>
