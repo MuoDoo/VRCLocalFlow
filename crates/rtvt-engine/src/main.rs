@@ -5,14 +5,13 @@ mod translate;
 
 use std::io::{self, BufRead, Write};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::RecvTimeoutError;
 use log::{error, info};
 
 use asr::AsrEngine;
-use lang::Language;
-use protocol::{AsrResultData, CapabilitiesInfo, Request, Response, TranslateResultData};
+use protocol::{CapabilitiesInfo, Request, Response, TranslateResultData};
 use translate::Translator;
 
 fn send_response(out: &mut impl Write, response: &Response) {
@@ -70,7 +69,29 @@ fn main() {
     let mut asr_engine: Option<AsrEngine> = None;
     let mut translator: Option<Translator> = None;
 
+    // If we don't see audio frames for AUDIO_GAP_FLUSH the speaker has likely paused
+    // (mic muted, capture stalled, or end of utterance with no trailing silence frames
+    // arriving). Force-flush whatever speech is buffered so we don't sit on it forever.
+    const AUDIO_GAP_FLUSH: Duration = Duration::from_millis(700);
+    let mut last_audio: Instant = Instant::now();
+
     loop {
+        // Wall-clock guard: real audio-stream gap → flush buffered speech.
+        if last_audio.elapsed() >= AUDIO_GAP_FLUSH {
+            if let Some(ref mut engine) = asr_engine {
+                if let Some(segment) = engine.vad.flush_if_speaking() {
+                    if let Some(result) = engine.transcribe(&segment) {
+                        send_response(
+                            &mut out,
+                            &Response::AsrResult { asr_result: result },
+                        );
+                    }
+                }
+            }
+            // Reset so we don't keep retrying every loop tick once flushed.
+            last_audio = Instant::now();
+        }
+
         match cmd_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(line) => {
                 let request: Request = match serde_json::from_str(&line) {
@@ -133,39 +154,24 @@ fn main() {
                         target,
                     } => {
                         info!("Initializing translator: {source} → {target}");
-                        let src_lang = Language::from_code(&source);
-                        let tgt_lang = Language::from_code(&target);
-                        match (src_lang, tgt_lang) {
-                            (Some(src), Some(tgt)) => {
-                                match Translator::new(Path::new(&models_root), src, tgt) {
-                                    Ok(t) => {
-                                        info!("Translator initialized");
-                                        translator = Some(t);
-                                        send_response(&mut out, &Response::ok());
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to initialize translator: {e:#}");
-                                        send_response(
-                                            &mut out,
-                                            &Response::error(format!(
-                                                "init_translator failed: {e}"
-                                            )),
-                                        );
-                                    }
-                                }
+                        match Translator::new(Path::new(&models_root), &source, &target) {
+                            Ok(t) => {
+                                info!("Translator initialized");
+                                translator = Some(t);
+                                send_response(&mut out, &Response::ok());
                             }
-                            _ => {
+                            Err(e) => {
+                                error!("Failed to initialize translator: {e:#}");
                                 send_response(
                                     &mut out,
-                                    &Response::error(format!(
-                                        "Unsupported language pair: {source} → {target}"
-                                    )),
+                                    &Response::error(format!("init_translator failed: {e}")),
                                 );
                             }
                         }
                     }
 
                     Request::Asr { audio_b64 } => {
+                        last_audio = Instant::now();
                         if let Some(ref mut engine) = asr_engine {
                             match decode_audio_b64(&audio_b64) {
                                 Ok(samples) => {

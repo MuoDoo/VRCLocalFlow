@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use ct2rs::{Config, TranslationOptions, Translator as Ct2Translator};
 
-use crate::lang::Language;
+use crate::lang::is_nllb_lang_token;
 
 /// Strip the Windows `\\?\` extended-length path prefix.
 /// CTranslate2's C++ layer cannot open files via this prefix.
@@ -59,10 +59,6 @@ impl ct2rs::Tokenizer for NllbTokenizer {
     }
 }
 
-fn is_nllb_lang_token(token: &str) -> bool {
-    token.len() == 8 && token.as_bytes().get(3) == Some(&b'_')
-}
-
 const NLLB_MODEL_DIR: &str = "nllb-200-distilled-600M";
 
 /// In-process translator using NLLB-200-distilled-600M via CTranslate2.
@@ -73,17 +69,18 @@ pub struct Translator {
 
 impl Translator {
     /// Create a translator for a specific language pair using the NLLB model.
-    pub fn new(models_root: &Path, source: Language, target: Language) -> Result<Self> {
+    /// `source_nllb` and `target_nllb` are NLLB language codes such as `eng_Latn`.
+    pub fn new(models_root: &Path, source_nllb: &str, target_nllb: &str) -> Result<Self> {
         let model_dir = strip_unc_prefix(&models_root.join(NLLB_MODEL_DIR));
         let config = Config::default();
 
-        let tokenizer = NllbTokenizer::new(&model_dir, source.nllb_code())?;
+        let tokenizer = NllbTokenizer::new(&model_dir, source_nllb)?;
         let translator = Ct2Translator::with_tokenizer(&model_dir, tokenizer, &config)
             .with_context(|| format!("Failed to load NLLB model from {:?}", model_dir))?;
 
         Ok(Self {
             translator,
-            target_lang: target.nllb_code().to_string(),
+            target_lang: target_nllb.to_string(),
         })
     }
 

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use log::{info, warn};
 use std::collections::VecDeque;
 use webrtc_vad::{SampleRate, Vad, VadMode};
@@ -235,6 +235,98 @@ impl VadProcessor {
             VadState::Speaking | VadState::TrailingSilence => self.flush(),
             VadState::Idle => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn junk_filter_matches_known_patterns() {
+        assert!(is_junk("[BLANK_AUDIO]"));
+        assert!(is_junk("  [music] "));
+        assert!(is_junk("you"));
+        assert!(is_junk("Thank you"));
+        assert!(!is_junk("hello world"));
+        assert!(!is_junk("youtube"));
+    }
+
+    #[test]
+    fn rms_energy_zero_for_silence() {
+        let silence = vec![0.0_f32; 1000];
+        assert_eq!(rms_energy(&silence), 0.0);
+    }
+
+    #[test]
+    fn rms_energy_nonzero_for_signal() {
+        let signal = vec![0.5_f32; 1000];
+        assert!((rms_energy(&signal) - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn trim_silence_strips_leading_and_trailing_zeros() {
+        // Use silence padding bigger than the function's internal pad
+        // (SAMPLE_RATE / 20 = 800 samples at 16 kHz) so trimming visibly shortens.
+        let mut audio = vec![0.0_f32; 3200];
+        audio.extend(vec![0.5_f32; 1600]);
+        audio.extend(vec![0.0_f32; 3200]);
+        let trimmed = trim_silence(&audio, SILENCE_THRESHOLD);
+        assert!(
+            trimmed.len() < audio.len(),
+            "trimmed {} should be < original {}",
+            trimmed.len(),
+            audio.len()
+        );
+        // The signal itself must still be present.
+        assert!(trimmed.len() >= 1600);
+    }
+
+    #[test]
+    fn vad_idle_until_speech() {
+        let mut vad = VadProcessor::new();
+        // Pure silence should never emit a segment.
+        let silence = vec![0.0_f32; VAD_FRAME_SAMPLES * 10];
+        assert!(vad.process_chunk(&silence).is_none());
+    }
+
+    #[test]
+    fn vad_flush_when_idle_returns_none() {
+        let mut vad = VadProcessor::new();
+        assert!(vad.flush().is_none());
+        assert!(vad.flush_if_speaking().is_none());
+    }
+
+    /// Generate a mid-frequency tone strong enough that webrtc-vad in Aggressive
+    /// mode classifies it as voiced. A pure sine works for this purpose.
+    fn tone(samples: usize, hz: f32) -> Vec<f32> {
+        (0..samples)
+            .map(|i| (2.0 * std::f32::consts::PI * hz * i as f32 / SAMPLE_RATE as f32).sin() * 0.6)
+            .collect()
+    }
+
+    #[test]
+    fn vad_emits_segment_after_speech_then_silence() {
+        let mut vad = VadProcessor::new();
+        // 1.5s of "speech" (tone)
+        let speech = tone(SAMPLE_RATE * 3 / 2, 300.0);
+        vad.process_chunk(&speech);
+        // Then 1s of silence — well past END_OF_SPEECH_MS = 700ms.
+        let silence = vec![0.0_f32; SAMPLE_RATE];
+        let result = vad.process_chunk(&silence);
+        assert!(result.is_some(), "expected a speech segment to be emitted");
+        let segment = result.unwrap();
+        // Segment should contain at least the speech we fed in.
+        assert!(segment.len() >= speech.len() / 2);
+    }
+
+    #[test]
+    fn f32_to_i16_clamps() {
+        let frame = [-2.0_f32, -0.5, 0.0, 0.5, 2.0];
+        let out = f32_frame_to_i16(&frame);
+        assert_eq!(out[0], -i16::MAX);
+        assert_eq!(out[2], 0);
+        assert_eq!(out[4], i16::MAX);
     }
 }
 
