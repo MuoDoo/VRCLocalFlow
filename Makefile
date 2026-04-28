@@ -4,12 +4,16 @@ SHELL := C:/Program\ Files/Git/bin/bash.exe
 # Use dash (-) prefix instead of slash (/) to prevent MSYS/Git-bash path conversion
 # (e.g. /utf-8 becomes C:/Program Files/Git/utf-8 under MSYS).
 # MSVC cl.exe accepts both - and / as option prefixes.
-# Only set -utf-8; let CMake use its default Release flags (/MD /O2 /Ob2 /DNDEBUG)
-# to match Rust's dynamic CRT linking on MSVC.
 export CFLAGS=-utf-8
 export CXXFLAGS=-utf-8
 export CMAKE_C_FLAGS=-utf-8
 export CMAKE_CXX_FLAGS=-utf-8
+# Static MSVC runtime (/MT) for ALL languages including CUDA. Matches the
+# rustflag in .cargo/config.toml. Keeps native deps on the same CRT so we
+# never see LNK2038 mismatches. CMP0091=NEW is required for the policy
+# to apply to CUDA host code via nvcc.
+export CMAKE_POLICY_DEFAULT_CMP0091=NEW
+export CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 endif
 
 MODELS_DIR := src-tauri/resources/models

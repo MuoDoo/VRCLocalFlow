@@ -9,7 +9,7 @@ A desktop application for real-time voice translation, designed for VRChat and o
 ## Features
 
 - **Real-time voice transcription** — Whisper.cpp with VAD (Voice Activity Detection)
-- **Multilingual translation** — NLLB-200-distilled supporting 200+ languages
+- **Multilingual translation** — NLLB-200-distilled (currently exposes English / Chinese / Japanese; the underlying model can be expanded to more languages with a small data-driven change)
 - **VRChat integration** — Send translated subtitles to VRChat chatbox via OSC
 - **100% offline** — All inference runs locally on your machine
 - **GPU acceleration** — Optional CUDA / Metal / OpenBLAS support
@@ -50,7 +50,7 @@ Models are downloaded on demand through the app's Settings panel:
 | Whisper tiny | ~75 MB | Fast, lower accuracy ASR |
 | Whisper base | ~142 MB | Balanced ASR (default) |
 | Whisper small | ~466 MB | Higher accuracy ASR |
-| NLLB-200-distilled | ~600 MB | Translation (200+ languages) |
+| NLLB-200-distilled | ~600 MB | Translation (en/zh/ja exposed; model itself supports many more) |
 
 ### VRChat Setup
 

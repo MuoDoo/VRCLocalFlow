@@ -1,0 +1,15 @@
+# Workspace-level Cargo config. Applies to both `src-tauri` and `crates/rtvt-engine`
+# so that host and engine binaries always link against the same MSVC runtime.
+#
+# Windows: link against the static MSVC runtime (`/MT`). This eliminates the
+# vcruntime140.dll dependency, lets the NSIS installer ship as a single .exe,
+# and — crucially — keeps Rust, ct2rs, whisper-rs-sys and CUDA/Vulkan native
+# code on the same CRT so we never see LNK2038 mismatches.
+#
+# CMake-side counterpart lives in the build environment (CI workflow + Makefile):
+#   CMAKE_POLICY_DEFAULT_CMP0091=NEW
+#   CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+#
+# Do NOT add /FORCE or /NODEFAULTLIB workarounds — fix the offending dep instead.
+[target.'cfg(target_os = "windows")']
+rustflags = ["-C", "target-feature=+crt-static"]

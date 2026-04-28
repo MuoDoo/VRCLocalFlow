@@ -8,6 +8,16 @@ on:
 
 env:
   TARGET_TRIPLE: x86_64-pc-windows-msvc
+  # MSVC runtime: static (/MT). Keep Rust, ct2rs, whisper-rs-sys, and CUDA/Vulkan
+  # native code all on the same CRT to avoid LNK2038 mismatches.
+  # CMP0091=NEW makes CMAKE_MSVC_RUNTIME_LIBRARY apply to ALL languages including CUDA.
+  RUSTFLAGS: -C target-feature=+crt-static
+  CMAKE_POLICY_DEFAULT_CMP0091: NEW
+  CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
+  CFLAGS: -utf-8
+  CXXFLAGS: -utf-8
+  CMAKE_C_FLAGS: -utf-8
+  CMAKE_CXX_FLAGS: -utf-8
 
 jobs:
   build-windows:
@@ -44,12 +54,6 @@ jobs:
 
       # ---- Step 1: Build CPU engine (no GPU SDK needed) ----
       - name: Build rtvt-engine (CPU)
-        env:
-          CFLAGS: -utf-8
-          CXXFLAGS: -utf-8
-          CMAKE_C_FLAGS: -utf-8
-          CMAKE_CXX_FLAGS: -utf-8
-          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build -p rtvt-engine --release
 
       - name: Copy CPU engine binary
@@ -73,36 +77,29 @@ jobs:
           echo "CUDA_PATH=$fixed" >> $env:GITHUB_ENV
           echo "CUDA_PATH_V12_6=$fixed" >> $env:GITHUB_ENV
 
-      # CUDA build: ct2rs .static_crt(true) hardcodes /MT for C/CXX.
-      # nvcc defaults to /MD for CUDA host code (LNK2038 mismatch).
-      # Fix: CMAKE_POLICY_DEFAULT_CMP0091=NEW enables CMAKE_MSVC_RUNTIME_LIBRARY
-      # for ALL languages including CUDA. MultiThreaded = /MT, matching ct2rs.
-      # whisper-rs-sys passes all CMAKE_* env vars as cmake -D defines.
+      # CUDA build. CRT is `/MT` from the workflow-level env (CMP0091=NEW +
+      # CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded apply to ALL languages including
+      # CUDA host code via nvcc). whisper-rs-sys forwards CMAKE_* env vars as
+      # cmake -D defines. NO continue-on-error: failures here MUST red the build.
       - name: Build rtvt-engine (CUDA)
-        continue-on-error: true
-        env:
-          CFLAGS: -utf-8
-          CXXFLAGS: -utf-8
-          CMAKE_C_FLAGS: -utf-8
-          CMAKE_CXX_FLAGS: -utf-8
-          RUSTFLAGS: -C target-feature=+crt-static
-          CMAKE_POLICY_DEFAULT_CMP0091: NEW
-          CMAKE_MSVC_RUNTIME_LIBRARY: MultiThreaded
         run: cargo build -p rtvt-engine --release --features cuda
 
       - name: Copy CUDA engine binary
-        continue-on-error: true
         shell: pwsh
         run: |
-          if (Test-Path target/release/rtvt-engine.exe) {
-            $size = (Get-Item target/release/rtvt-engine.exe).Length
-            # Only copy if it's a CUDA build (larger than CPU-only, >30MB indicates CUDA linked)
-            if ($size -gt 30MB) {
-              Copy-Item target/release/rtvt-engine.exe "src-tauri/binaries/rtvt-engine-cuda-${env:TARGET_TRIPLE}.exe"
-            } else {
-              Write-Host "Skipping CUDA copy - binary appears to be from previous non-CUDA build"
-            }
+          $src = "target/release/rtvt-engine.exe"
+          if (-not (Test-Path $src)) {
+            Write-Error "CUDA build did not produce target/release/rtvt-engine.exe"
+            exit 1
           }
+          $size = (Get-Item $src).Length
+          # CUDA-linked engine is significantly larger than CPU-only (~30+ MB).
+          # Anything smaller indicates we accidentally copied a stale CPU binary.
+          if ($size -lt 30MB) {
+            Write-Error "CUDA engine binary suspiciously small ($size bytes) — CUDA likely not linked"
+            exit 1
+          }
+          Copy-Item $src "src-tauri/binaries/rtvt-engine-cuda-${env:TARGET_TRIPLE}.exe"
 
       # ---- Step 3: Build Vulkan engine ----
       - name: Install Vulkan SDK
@@ -117,12 +114,6 @@ jobs:
           echo "$sdkPath\Bin" >> $env:GITHUB_PATH
 
       - name: Build rtvt-engine (Vulkan)
-        env:
-          CFLAGS: -utf-8
-          CXXFLAGS: -utf-8
-          CMAKE_C_FLAGS: -utf-8
-          CMAKE_CXX_FLAGS: -utf-8
-          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build -p rtvt-engine --release --features vulkan
 
       - name: Copy Vulkan engine binary
@@ -138,9 +129,6 @@ jobs:
       # ---- Step 5: Build Tauri app (UI + audio only, no GPU features) ----
       - name: Build Tauri app (NSIS installer)
         shell: pwsh
-        env:
-          CFLAGS: -utf-8
-          CXXFLAGS: -utf-8
         run: |
           # Detect which engine binaries were built successfully
           $bins = @()

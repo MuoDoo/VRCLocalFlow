@@ -9,7 +9,7 @@
 ## 特性
 
 - **实时语音转写** — 基于 Whisper.cpp，内置 VAD 语音活动检测
-- **多语言翻译** — NLLB-200-distilled 支持 200+ 种语言
+- **多语言翻译** — NLLB-200-distilled（当前界面已开放英 / 中 / 日；底层模型可通过少量数据驱动改动扩展更多语言）
 - **VRChat 集成** — 通过 OSC 协议将翻译字幕发送到 VRChat 聊天框
 - **完全离线** — 所有推理在本地完成，无需网络
 - **GPU 加速** — 可选 CUDA / Metal / OpenBLAS 支持
@@ -50,7 +50,7 @@
 | Whisper tiny | ~75 MB | 快速识别，精度较低 |
 | Whisper base | ~142 MB | 均衡（默认） |
 | Whisper small | ~466 MB | 高精度识别 |
-| NLLB-200-distilled | ~600 MB | 翻译（200+ 种语言） |
+| NLLB-200-distilled | ~600 MB | 翻译（界面开放 en/zh/ja，模型本身支持更多语言） |
 
 ### VRChat 设置
 
