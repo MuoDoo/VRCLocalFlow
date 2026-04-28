@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::process::ChildStdout;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use crossbeam_channel::Receiver;
@@ -98,6 +99,19 @@ impl Pipeline {
         self.running.load(Ordering::SeqCst)
     }
 
+    /// Mark pipeline as stopped (used by reader loop on engine death).
+    fn mark_stopped(running: &Arc<AtomicBool>, app_handle: &AppHandle, reason: &str) {
+        if running.swap(false, Ordering::SeqCst) {
+            let _ = app_handle.emit(
+                "pipeline-status",
+                PipelineStatus {
+                    status: "stopped".to_string(),
+                    message: reason.to_string(),
+                },
+            );
+        }
+    }
+
     /// Start the pipeline: audio capture → engine sidecar (ASR + translate) → TTS.
     pub fn start(
         &mut self,
@@ -153,7 +167,11 @@ impl Pipeline {
             .to_string();
 
         writer
-            .send_init_translator(&models_root_str, &config.source_lang, &config.target_lang)
+            .send_init_translator(
+                &models_root_str,
+                source.nllb_code(),
+                target.nllb_code(),
+            )
             .context("Failed to send init_translator")?;
 
         // Configure TTS
@@ -315,13 +333,13 @@ fn engine_reader_loop(
     scroll_controller: Option<ScrollController>,
 ) {
     let mut segment_counter: u64 = 0;
+    // Track ASR text per segment so VRChat OSC has the original alongside the translation.
+    let pending_originals: Arc<Mutex<HashMap<u64, String>>> = Arc::new(Mutex::new(HashMap::new()));
 
     while running.load(Ordering::SeqCst) {
         match engine::read_response(&mut stdout) {
             Ok(response) => match response {
-                EngineResponse::Ok { .. } => {
-                    // Init acknowledgment — update status
-                }
+                EngineResponse::Ok { .. } => {}
                 EngineResponse::Error { error } => {
                     warn!("Engine error: {error}");
                     let _ = app_handle.emit(
@@ -340,21 +358,24 @@ fn engine_reader_loop(
                 }
                 EngineResponse::AsrResult { asr_result } => {
                     segment_counter += 1;
+                    let segment_id = segment_counter;
                     info!(
                         "ASR segment {}: {} (lang={})",
-                        segment_counter, asr_result.text, asr_result.language
+                        segment_id, asr_result.text, asr_result.language
                     );
 
-                    // Emit ASR segment for frontend
+                    if let Ok(mut map) = pending_originals.lock() {
+                        map.insert(segment_id, asr_result.text.clone());
+                    }
+
                     let _ = app_handle.emit(
                         "asr-segment",
                         AsrSegment {
                             text: asr_result.text.clone(),
-                            segment_id: segment_counter,
+                            segment_id,
                         },
                     );
 
-                    // Send translation request
                     if let Err(e) = writer.send_translate(&asr_result.text) {
                         error!("Failed to send translate command: {e}");
                     }
@@ -362,33 +383,40 @@ fn engine_reader_loop(
                 EngineResponse::TranslateResult { translate_result } => {
                     info!("Translation: {}", translate_result.text);
 
-                    // Emit translate result for frontend
+                    let segment_id = segment_counter;
+                    let original = pending_originals
+                        .lock()
+                        .ok()
+                        .and_then(|mut map| map.remove(&segment_id))
+                        .unwrap_or_default();
+
                     let _ = app_handle.emit(
                         "translate-result",
                         TranslateResult {
                             text: translate_result.text.clone(),
-                            segment_id: segment_counter,
+                            segment_id,
                         },
                     );
 
-                    // TTS
                     if let Err(e) =
                         tts::speak(&translate_result.text, &tts_voice, player.as_ref())
                     {
                         error!("TTS error: {e}");
                     }
 
-                    // VRChat OSC
                     if let Some(ref controller) = scroll_controller {
-                        // We need the original text for VRChat display.
-                        // The reader doesn't have it at this point, so just use translated.
-                        controller.update("", &translate_result.text, segment_counter);
+                        controller.update(&original, &translate_result.text, segment_id);
                     }
                 }
             },
             Err(e) => {
                 if running.load(Ordering::SeqCst) {
                     error!("Engine read error: {e}");
+                    Pipeline::mark_stopped(
+                        &running,
+                        &app_handle,
+                        &format!("Engine stopped unexpectedly: {e}"),
+                    );
                 }
                 break;
             }

@@ -158,7 +158,6 @@ pub fn run() {
             audio::playback::list_output_devices,
             asr::whisper::list_whisper_models,
             asr::whisper::download_whisper_model,
-            translate::download::list_translation_download_models,
             translate::download::download_translation_model,
             translate::registry::list_translation_models,
             start_pipeline,

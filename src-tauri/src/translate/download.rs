@@ -38,21 +38,13 @@ fn download_endpoints() -> Vec<(String, String)> {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct NllbModelInfo {
-    pub id: String,
-    pub name: String,
-    pub size_mb: u32,
-    pub downloaded: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct NllbDownloadProgress {
     pub model_id: String,
     pub progress: u32,
 }
 
 /// Resolve the models directory.
-fn resolve_models_dir(app_handle: &AppHandle) -> PathBuf {
+pub(crate) fn resolve_models_dir(app_handle: &AppHandle) -> PathBuf {
     if let Ok(resource_dir) = app_handle.path().resource_dir() {
         let models = resource_dir.join(MODELS_SUBDIR);
         if models.exists() {
@@ -71,22 +63,9 @@ fn resolve_models_dir(app_handle: &AppHandle) -> PathBuf {
 }
 
 /// Check if the NLLB model is fully downloaded.
-fn is_nllb_downloaded(models_dir: &PathBuf) -> bool {
+pub(crate) fn is_nllb_downloaded(models_dir: &PathBuf) -> bool {
     let model_dir = models_dir.join(NLLB_MODEL_DIR);
     model_dir.join("model.bin").exists() && model_dir.join("sentencepiece.bpe.model").exists()
-}
-
-#[tauri::command]
-pub async fn list_translation_download_models(
-    app_handle: AppHandle,
-) -> Result<Vec<NllbModelInfo>, String> {
-    let models_dir = resolve_models_dir(&app_handle);
-    Ok(vec![NllbModelInfo {
-        id: NLLB_MODEL_DIR.to_string(),
-        name: "NLLB-200 (all language pairs)".to_string(),
-        size_mb: 600,
-        downloaded: is_nllb_downloaded(&models_dir),
-    }])
 }
 
 #[tauri::command]
@@ -184,11 +163,15 @@ pub async fn download_translation_model(
             }
         };
 
+        let expected_size = response.content_length().unwrap_or(0);
         let tmp_dest = std::env::temp_dir().join(format!("rtvt-nllb-{filename}"));
+        // Wipe any stale tmp from prior failed attempt.
+        let _ = tokio::fs::remove_file(&tmp_dest).await;
         let mut file = tokio::fs::File::create(&tmp_dest)
             .await
             .map_err(|e| format!("Failed to create temp file: {e}"))?;
 
+        let mut file_bytes: u64 = 0;
         let mut stream = response.bytes_stream();
         use tokio::io::AsyncWriteExt;
         while let Some(chunk) = stream.next().await {
@@ -197,6 +180,7 @@ pub async fn download_translation_model(
                 .await
                 .map_err(|e| format!("Write error: {e}"))?;
 
+            file_bytes += chunk.len() as u64;
             bytes_downloaded += chunk.len() as u64;
             // Cap at 99% until fully complete
             let progress = ((bytes_downloaded * 99) / NLLB_TOTAL_BYTES).min(99) as u32;
@@ -216,6 +200,23 @@ pub async fn download_translation_model(
             .map_err(|e| format!("Flush error: {e}"))?;
         drop(file);
 
+        // Validate size against Content-Length to reject truncated downloads.
+        if expected_size > 0 && file_bytes != expected_size {
+            let _ = tokio::fs::remove_file(&tmp_dest).await;
+            return Err(format!(
+                "Download incomplete for {filename}: expected {expected_size} bytes, got {file_bytes}. \
+                 Please retry."
+            ));
+        }
+        // model.bin is ~600 MB; the others are still well over 1 KB. Reject anything tiny.
+        if file_bytes < 1024 {
+            let _ = tokio::fs::remove_file(&tmp_dest).await;
+            return Err(format!(
+                "Download too small for {filename} ({file_bytes} bytes) — server likely \
+                 returned an error page. Please retry or switch HF endpoint."
+            ));
+        }
+
         if tokio::fs::rename(&tmp_dest, &dest).await.is_err() {
             tokio::fs::copy(&tmp_dest, &dest)
                 .await
@@ -223,7 +224,7 @@ pub async fn download_translation_model(
             let _ = tokio::fs::remove_file(&tmp_dest).await;
         }
 
-        info!("Downloaded {filename} for NLLB");
+        info!("Downloaded {filename} for NLLB ({file_bytes} bytes)");
     }
 
     info!("NLLB model downloaded successfully");

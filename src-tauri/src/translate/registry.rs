@@ -1,8 +1,7 @@
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
+use super::download::{is_nllb_downloaded, resolve_models_dir};
 use super::NLLB_MODEL_DIR;
 
 /// Supported languages for translation.
@@ -72,39 +71,15 @@ pub struct TranslationModelInfo {
     pub downloaded: bool,
 }
 
-fn resolve_models_dir(app_handle: &AppHandle) -> PathBuf {
-    if let Ok(resource_dir) = app_handle.path().resource_dir() {
-        let models = resource_dir.join("models");
-        if models.exists() {
-            return models;
-        }
-    }
-    let dev_path = PathBuf::from("resources/models");
-    if dev_path.exists() {
-        return dev_path;
-    }
-    let src_tauri_path = PathBuf::from("src-tauri/resources/models");
-    if src_tauri_path.exists() {
-        return src_tauri_path;
-    }
-    dev_path
-}
-
-fn is_nllb_model_present(models_dir: &std::path::Path) -> bool {
-    let dir = models_dir.join(NLLB_MODEL_DIR);
-    dir.join("model.bin").exists() && dir.join("sentencepiece.bpe.model").exists()
-}
-
 #[tauri::command]
 pub async fn list_translation_models(
     app_handle: AppHandle,
 ) -> Result<Vec<TranslationModelInfo>, String> {
     let models_dir = resolve_models_dir(&app_handle);
-    let result = vec![TranslationModelInfo {
+    Ok(vec![TranslationModelInfo {
         id: NLLB_MODEL_DIR.to_string(),
         name: "NLLB-200 (all language pairs)".to_string(),
         size_mb: 600,
-        downloaded: is_nllb_model_present(&models_dir),
-    }];
-    Ok(result)
+        downloaded: is_nllb_downloaded(&models_dir),
+    }])
 }

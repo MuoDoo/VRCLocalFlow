@@ -168,6 +168,11 @@ pub async fn download_whisper_model(
         return Ok(());
     }
 
+    // If a stale temp file from a previous failed download exists, remove it so we
+    // never resume into an inconsistent state.
+    let tmp_dest = std::env::temp_dir().join(format!("rtvt-download-{}", model_def.filename));
+    let _ = std::fs::remove_file(&tmp_dest);
+
     let client = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .build()
@@ -196,8 +201,6 @@ pub async fn download_whisper_model(
     })?;
 
     let total_size = response.content_length().unwrap_or(0);
-
-    let tmp_dest = std::env::temp_dir().join(format!("rtvt-download-{}", model_def.filename));
 
     let mut file = tokio::fs::File::create(&tmp_dest)
         .await
@@ -237,6 +240,25 @@ pub async fn download_whisper_model(
         .await
         .map_err(|e| format!("Flush error: {e}"))?;
     drop(file);
+
+    // Validate downloaded size against Content-Length (catches truncated downloads,
+    // proxy interception, and HTML error pages that slipped past status checks).
+    if total_size > 0 && downloaded != total_size {
+        let _ = tokio::fs::remove_file(&tmp_dest).await;
+        return Err(format!(
+            "Download incomplete: expected {total_size} bytes, got {downloaded}. \
+             The temporary file was discarded; please retry."
+        ));
+    }
+    // Sanity floor — whisper ggml files are at least a few MB. A few-KB result is
+    // almost always an HTML error page served with a 200 status.
+    if downloaded < 1024 * 1024 {
+        let _ = tokio::fs::remove_file(&tmp_dest).await;
+        return Err(format!(
+            "Download too small ({downloaded} bytes) — server likely returned an error page. \
+             Please retry or switch HF endpoint."
+        ));
+    }
 
     if let Err(_) = tokio::fs::rename(&tmp_dest, &dest).await {
         tokio::fs::copy(&tmp_dest, &dest)
